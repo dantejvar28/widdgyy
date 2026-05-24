@@ -27,7 +27,7 @@ class ConfigLoader:
     def create_sticker(self, data):
 
         sticker_type = data["type"]
-
+        css_class = data.get("class", "")
         if sticker_type == "text":
 
             return TextSticker(
@@ -37,7 +37,8 @@ class ConfigLoader:
                 font_size=data.get(
                     "font_size",
                     32
-                )
+                ),
+                css_class=css_class
             )
 
         elif sticker_type == "image":

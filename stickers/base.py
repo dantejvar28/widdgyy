@@ -10,6 +10,7 @@ class Sticker:
             visible=True,
             z_index=0,
             css_class=""):
+        
         self.x = x
         self.y = y
 
@@ -19,6 +20,7 @@ class Sticker:
         self.visible = visible
         self.z_index = z_index
         self.css_class = css_class
+        self.style = {}
 
     def update(self,delta):
         pass

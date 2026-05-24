@@ -15,7 +15,21 @@ class TextSticker(Sticker):
         self.font_size = font_size
         self.color = color
     def render(self, ctx):
-        ctx.set_source_rgba(*self.color)
+        font_size = self.font_size
+        color = self.color
+
+        if "font_size" in self.style:
+            font_size = float(
+                self.style["font_size"]
+            )
+        if "color" in self.style:
+            color = tuple(
+                map(
+                    float,
+                    self.style["color"].split(",")
+                )
+            )
+        ctx.set_source_rgba(*color)
         
         ctx.select_font_face(
             "Sans",
@@ -23,6 +37,6 @@ class TextSticker(Sticker):
             cairo.FONT_WEIGHT_NORMAL
         )
 
-        ctx.set_font_size(self.font_size)
+        ctx.set_font_size(font_size)
         ctx.move_to(self.x, self.y)
         ctx.show_text(self.text)
