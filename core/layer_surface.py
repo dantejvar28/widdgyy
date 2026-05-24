@@ -10,12 +10,12 @@ from gi.repository import Gdk
 from core.renderer import Renderer
 
 class LayerSurface:
-    def __init__(self,app):
+    def __init__(self,app,scene):
         self.window =Gtk.ApplicationWindow(application=app)
 
         self.setup_window()
         self.setup_layer_shell()
-        self.renderer=Renderer(self.window)
+        self.renderer=Renderer(self.window,scene)
     
     def setup_window(self):
         self.window.set_decorated(False)
