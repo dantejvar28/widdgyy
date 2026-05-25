@@ -38,6 +38,6 @@ class Renderer:
             self.scene.stickers,
             key=lambda s: s.z_index
         )
-        for sticker in self.scene.stickers:
+        for sticker in stickers:
             if sticker.visible:
                 sticker.render(ctx, width, height)

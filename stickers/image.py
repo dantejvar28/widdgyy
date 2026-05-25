@@ -20,6 +20,9 @@ class ImageSticker(Sticker):
         self.original_image=GdkPixbuf.Pixbuf.new_from_file(path)
         self.width=width
         self.height=height
+        self.cached_image = None
+        self.cached_width = None
+        self.cached_height = None
 
     def render(self,ctx,screen_width,screen_height):
 
@@ -54,10 +57,9 @@ class ImageSticker(Sticker):
             width = max(1, int(original_width * (target_height / original_height)))
 
         if width != original_width or height != original_height:
-            image = self.original_image.scale_simple(
+            image = self.get_scaled_image(
                 width,
-                height,
-                GdkPixbuf.InterpType.BILINEAR
+                height
             )
 
         real_x, real_y = self.get_position(
@@ -74,5 +76,26 @@ class ImageSticker(Sticker):
 
         )
         ctx.paint()
+    
+    def get_scaled_image(self, target_width, target_height):
+
+        if (
+            self.cached_image is not None
+            and self.cached_width == target_width
+            and self.cached_height == target_height 
+        ):
+            return self.cached_image
+        
+        image = self.original_image.scale_simple(
+            target_width,
+            target_height,
+            GdkPixbuf.InterpType.BILINEAR
+        )
+
+        #save to cache
+        self.cached_image = image
+        self.cached_width = target_width
+        self.cached_height = target_height
+        return image
     
     

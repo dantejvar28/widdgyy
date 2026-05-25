@@ -17,5 +17,9 @@ class Scene:
         )
     def update(self,delta):
         for sticker in self.stickers:
-            sticker.update(delta)
+            if not sticker.visible:
+                continue
+            if sticker.should_update(delta):
+                sticker.update(delta)
+
     

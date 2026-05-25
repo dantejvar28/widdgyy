@@ -2,7 +2,7 @@ import commentjson as json
 
 from stickers.text import TextSticker
 from stickers.image import ImageSticker
-
+from stickers.clock import ClockSticker
 
 class ConfigLoader:
 
@@ -58,6 +58,17 @@ class ConfigLoader:
                 offset_y=get_value("offset_y", "offset-y", default=0),
                 z_index=data.get("z_index", 0),
                 css_class=css_class
+            )
+        elif sticker_type == "clock":
+            return ClockSticker(
+                format=data.get("format","%H:%M:%S"),
+                update_interval=data.get("update_interval",1),
+                anchor=get_value("anchor", "top-left"),
+                offset_x=get_value("offset_x",0),
+                offset_y=get_value("offset_y",0),
+                font_size=get_value("font_size", "font-size", default=32),
+                css_class=css_class,
+                z_index=data.get("z_index", 0)
             )
 
         raise ValueError(

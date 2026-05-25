@@ -12,6 +12,7 @@ class Sticker:
             height=0,
             visible=True,
             z_index=0,
+            update_interval=0,
             css_class=""):
         
         self.x = x
@@ -29,6 +30,18 @@ class Sticker:
         self.z_index = z_index
         self.css_class = css_class
         self.style = {}
+        self.update_interval = update_interval
+        self.elapsed_time = 0
+
+    def should_update(self, delta):
+        if self.update_interval <=0:
+            return True
+        self.elapsed_time += delta
+        if self.elapsed_time >= self.update_interval:
+            self.elapsed_time = 0
+            return True
+        return False 
+
 
     def update(self,delta):
         pass
