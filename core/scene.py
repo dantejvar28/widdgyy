@@ -8,6 +8,9 @@ class Scene:
     def remove(self,sticker):
         self.stickers.remove(sticker)
 
+    def clear(self):
+        self.stickers.clear()
+
     def sort_z(self):
         self.stickers.sort(
             key=lambda s: s.z_index

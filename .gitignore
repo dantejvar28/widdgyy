@@ -1,1 +1,7 @@
 assets/
+
+# cache files and python cache files
+.cache/
+__pycache__/
+
+

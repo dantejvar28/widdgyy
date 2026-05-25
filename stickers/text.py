@@ -14,13 +14,17 @@ class TextSticker(Sticker):
         self.text = text
         self.font_size = font_size
         self.color = color
-    def render(self, ctx):
+    def render(self, ctx, screen_width, screen_height):
         font_size = self.font_size
         color = self.color
 
         if "font_size" in self.style:
             font_size = float(
                 self.style["font_size"]
+            )
+        elif "font-size" in self.style:
+            font_size = float(
+                self.style["font-size"]
             )
         if "color" in self.style:
             color = tuple(
@@ -38,5 +42,6 @@ class TextSticker(Sticker):
         )
 
         ctx.set_font_size(font_size)
-        ctx.move_to(self.x, self.y)
+        real_x, real_y = self.get_position(screen_width, screen_height)
+        ctx.move_to(real_x, real_y)
         ctx.show_text(self.text)

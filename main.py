@@ -7,6 +7,7 @@ from core.layer_surface import LayerSurface
 from core.scene import Scene
 from core.config_loader import ConfigLoader
 from core.css_loader import CSSLoader
+from core.hot_reload import HotReload
 
 class App(Gtk.Application):
     def do_activate(self):
@@ -20,6 +21,13 @@ class App(Gtk.Application):
             "/home/daniel/.config/widdgyy/styles.css"
         )
         css_loader.load()
+        
+        hot_reload = HotReload(
+            scene,
+            loader,
+            css_loader
+        )
+        hot_reload.start()
 
         for sticker in scene.stickers:
             sticker.style=css_loader.get_style(

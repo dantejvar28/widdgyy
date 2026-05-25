@@ -26,18 +26,22 @@ class ConfigLoader:
 
     def create_sticker(self, data):
 
+        def get_value(*keys, default=None):
+            for key in keys:
+                if key in data:
+                    return data[key]
+            return default
+
         sticker_type = data["type"]
         css_class = data.get("class", "")
         if sticker_type == "text":
 
             return TextSticker(
                 text=data["text"],
-                x=data["x"],
-                y=data["y"],
-                font_size=data.get(
-                    "font_size",
-                    32
-                ),
+                font_size=get_value("font_size", "font-size", default=32),
+                anchor=get_value("anchor", default="top-left"),
+                offset_x=get_value("offset_x", "offset-x", default=0),
+                offset_y=get_value("offset_y", "offset-y", default=0),
                 css_class=css_class
             )
 
@@ -45,8 +49,14 @@ class ConfigLoader:
 
             return ImageSticker(
                 path=data["path"],
-                x=data["x"],
-                y=data["y"]
+                width=data.get("width"),
+                height=data.get("height"),
+                x=get_value("x", default=0),
+                y=get_value("y", default=0),
+                anchor=get_value("anchor", default="top-left"),
+                offset_x=get_value("offset_x", "offset-x", default=0),
+                offset_y=get_value("offset_y", "offset-y", default=0),
+                css_class=css_class
             )
 
         raise ValueError(
