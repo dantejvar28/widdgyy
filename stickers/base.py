@@ -42,10 +42,16 @@ class Sticker:
             return True
         return False 
 
+    def measure(self,ctx,screen_width,screen_height):
+        return 0,0
+
+    # Backward-compatible alias for legacy call sites.
+    def mesure(self,ctx,screen_width,screen_height):
+        return self.measure(ctx,screen_width,screen_height)
 
     def update(self,delta):
         pass
-    def render(self, ctx):
+    def render(self, ctx,x,y,w,h):
         pass 
 
     def get_position(

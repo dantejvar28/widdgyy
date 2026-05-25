@@ -74,6 +74,8 @@ class ConfigLoader:
         elif sticker_type == "api_text":
             return APITextSticker(
                 url=data["url"],
+                template=data.get("template",""),
+                fields=data.get("fields",{}),
                 update_interval=data.get("update_interval", 10),
                 anchor=data.get("anchor","top-left"),
                 offset_x=data.get("offset_x",0),

@@ -1,5 +1,10 @@
 def resolve_unit(value,total_size):
 
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+
     if isinstance(value, int):
         return value
     if isinstance(value, float):

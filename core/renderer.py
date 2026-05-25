@@ -39,5 +39,11 @@ class Renderer:
             key=lambda s: s.z_index
         )
         for sticker in stickers:
-            if sticker.visible:
-                sticker.render(ctx, width, height)
+            if not sticker.visible:
+                continue
+            if hasattr(sticker, "measure"):
+                w, h = sticker.measure(ctx, width, height)
+            else:
+                w, h = sticker.mesure(ctx, width, height)
+            x, y = sticker.get_position(width, height, w, h)
+            sticker.render(ctx, width, height,x,y, w, h)
