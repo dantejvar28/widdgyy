@@ -1,4 +1,4 @@
-# ProyectoTest
+# Widdgyy
 
 Python project with a GTK interface to render text and image stickers.
 
