@@ -34,6 +34,10 @@ class Renderer:
         ctx.set_operator(cairo.OPERATOR_OVER)
     
     def render_scene(self,ctx,width,height):
+        stickers = sorted(
+            self.scene.stickers,
+            key=lambda s: s.z_index
+        )
         for sticker in self.scene.stickers:
             if sticker.visible:
                 sticker.render(ctx, width, height)

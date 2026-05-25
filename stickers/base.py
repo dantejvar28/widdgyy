@@ -35,7 +35,13 @@ class Sticker:
     def render(self, ctx):
         pass 
 
-    def get_position(self, screen_width, screen_height):
+    def get_position(
+            self,
+            screen_width,
+            screen_height,
+            object_width=0,
+            object_height=0
+    ):
         x = self.x
         y = self.y
 
@@ -43,15 +49,15 @@ class Sticker:
             x = self.offset_x
             y = self.offset_y
         elif self.anchor == "top-right":
-            x = screen_width + self.offset_x
+            x = screen_width - object_width + self.offset_x
             y = self.offset_y
         elif self.anchor == "bottom-left":
             x = self.offset_x
-            y = screen_height + self.offset_y 
+            y = screen_height - object_height + self.offset_y 
         elif self.anchor == "bottom-right":
-            x = screen_width + self.offset_x
-            y = screen_height + self.offset_y
+            x = screen_width - object_width + self.offset_x
+            y = screen_height - object_height + self.offset_y
         elif self.anchor == "center":
-            x = screen_width / 2 + self.offset_x
-            y = screen_height / 2 + self.offset_y
+            x = (screen_width - object_width) / 2 + self.offset_x
+            y = (screen_height - object_height) / 2 + self.offset_y
         return x, y

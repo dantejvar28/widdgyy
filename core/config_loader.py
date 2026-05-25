@@ -56,6 +56,7 @@ class ConfigLoader:
                 anchor=get_value("anchor", default="top-left"),
                 offset_x=get_value("offset_x", "offset-x", default=0),
                 offset_y=get_value("offset_y", "offset-y", default=0),
+                z_index=data.get("z_index", 0),
                 css_class=css_class
             )
 
