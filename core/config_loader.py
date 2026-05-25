@@ -3,6 +3,7 @@ import commentjson as json
 from stickers.text import TextSticker
 from stickers.image import ImageSticker
 from stickers.clock import ClockSticker
+from stickers.api_text import APITextSticker
 
 class ConfigLoader:
 
@@ -67,6 +68,17 @@ class ConfigLoader:
                 offset_x=get_value("offset_x",0),
                 offset_y=get_value("offset_y",0),
                 font_size=get_value("font_size", "font-size", default=32),
+                css_class=css_class,
+                z_index=data.get("z_index", 0)
+            )
+        elif sticker_type == "api_text":
+            return APITextSticker(
+                url=data["url"],
+                update_interval=data.get("update_interval", 10),
+                anchor=data.get("anchor","top-left"),
+                offset_x=data.get("offset_x",0),
+                offset_y=data.get("offset_y",0),
+                font_size=data.get("font_size", 32),
                 css_class=css_class,
                 z_index=data.get("z_index", 0)
             )
