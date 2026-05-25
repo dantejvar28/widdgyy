@@ -4,4 +4,8 @@ assets/
 .cache/
 __pycache__/
 
-
+.vscode/
+.pyc
+*.pyc
+*.pyo
+*.pyd
