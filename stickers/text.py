@@ -37,7 +37,7 @@ class TextSticker(Sticker):
         except Exception:
             return fallback
 
-    def render(self, ctx, screen_width, screen_height, x, y, w, h):
+    def render(self, ctx, x, y, w, h):
         font_size = self.font_size
         color = self.color
 
@@ -70,7 +70,7 @@ class TextSticker(Sticker):
         PangoCairo.show_layout(ctx, layout)
     
     def measure(self, ctx, screen_width, screen_height):
-        layout = PangoCairo.create_layout(ctx)
+        
         font_size = self.font_size
         if "font_size" in self.style:
             font_size = float(
@@ -80,10 +80,11 @@ class TextSticker(Sticker):
             font_size = float(
                 self.style["font-size"]
             )
+        layout = PangoCairo.create_layout(ctx)
+        layout.set_text(self.text, -1)
         font_desc = Pango.FontDescription()
         font_desc.set_family("Sans")
         font_desc.set_size(int(font_size * Pango.SCALE))
         layout.set_font_description(font_desc)
-        layout.set_text(self.text, -1)
         width, height = layout.get_pixel_size()
         return width, height
