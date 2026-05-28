@@ -4,6 +4,8 @@ from stickers.text import TextSticker
 from stickers.image import ImageSticker
 from stickers.clock import ClockSticker
 from stickers.api_text import APITextSticker
+from layouts.hbox import Hbox
+from layouts.vbox import VBox
 
 class ConfigLoader:
 
@@ -83,6 +85,65 @@ class ConfigLoader:
                 font_size=data.get("font_size", 32),
                 css_class=css_class,
                 z_index=data.get("z_index", 0)
+            )
+        elif sticker_type == "hbox":
+            children=[]
+            for child_data in data.get("children",[]):
+                child = self.create_sticker(
+                    child_data
+                )
+                children.append(child)
+            return Hbox(
+                children=children,
+                spacing=data.get("spacing",0),
+                padding=data.get("padding",0),
+
+                anchor=data.get(
+                    "anchor","top-left"
+                ),
+                offset_x=data.get(
+                    "offset_x",0
+                ),
+                offset_y=data.get(
+                    "offset_y",0
+                ),
+                z_index=data.get(
+                    "z_index",0
+                )
+            )
+        elif sticker_type == "vbox":
+            children=[]
+            for child_data in data.get(
+                "children",[]
+            ):
+                child = self.create_sticker(
+                    child_data
+                )
+                children.append(child)
+            return VBox(
+                children=children,
+                spacing=data.get(
+                    "spacing",0
+                ),
+                padding=data.get(
+                    "padding",0
+                ),
+                justify=data.get(
+                    "justify","start"
+                ),
+                anchor=data.get(
+                    "anchor","top-left"
+                ),
+                offset_x=data.get(
+                    "offset_x",0
+                ),
+                offset_y=data.get(
+                    "offset_y",0
+                ),
+                z_index=data.get(
+                    "z_index",0
+                )
+
             )
 
         raise ValueError(

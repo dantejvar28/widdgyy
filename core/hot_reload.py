@@ -17,6 +17,16 @@ class HotReload:
         self.config_mtime = 0
         self.css_mtime = 0 
 
+    def apply_styles(self, sticker):
+        sticker.style = self.css_loader.get_style(
+            sticker.css_class
+        )
+
+        children = getattr(sticker, "children", None)
+        if children:
+            for child in children:
+                self.apply_styles(child)
+
     def start(self):
         GLib.timeout_add(
             1000,
@@ -53,8 +63,4 @@ class HotReload:
 
         self.css_loader.load()
         for sticker in self.scene.stickers:
-            sticker.style = (
-                self.css_loader.get_style(
-                    sticker.css_class
-                )
-            )
+            self.apply_styles(sticker)

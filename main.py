@@ -30,9 +30,7 @@ class App(Gtk.Application):
         hot_reload.start()
 
         for sticker in scene.stickers:
-            sticker.style=css_loader.get_style(
-                sticker.css_class
-                )
+            hot_reload.apply_styles(sticker)
 
         surface=LayerSurface(self,scene)
         surface.show()
