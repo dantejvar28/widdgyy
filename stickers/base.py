@@ -38,7 +38,7 @@ class Sticker:
             return True
         self.elapsed_time += delta
         if self.elapsed_time >= self.update_interval:
-            self.elapsed_time = 0
+            self.elapsed_time -= self.update_interval
             return True
         return False 
 
@@ -66,6 +66,9 @@ class Sticker:
 
         if self.anchor =="top-left":
             x = self.offset_x
+            y = self.offset_y
+        elif self.anchor == "top-center":
+            x = (screen_width - object_width) / 2 + self.offset_x
             y = self.offset_y
         elif self.anchor == "top-right":
             x = screen_width - object_width + self.offset_x

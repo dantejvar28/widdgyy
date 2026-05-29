@@ -97,7 +97,8 @@ class ConfigLoader:
                 children=children,
                 spacing=data.get("spacing",0),
                 padding=data.get("padding",0),
-
+                justify=get_value("justify", "align", default="start"),
+                align_items=data.get("align_items","start"),
                 anchor=data.get(
                     "anchor","top-left"
                 ),
@@ -130,6 +131,9 @@ class ConfigLoader:
                 ),
                 justify=data.get(
                     "justify","start"
+                ),
+                align_items=data.get(
+                    "align_items","start"
                 ),
                 anchor=data.get(
                     "anchor","top-left"

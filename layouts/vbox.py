@@ -7,6 +7,7 @@ class VBox(Sticker):
             spacing=0,
             padding=0,
             justify="start",
+            align_items="start",
             **kwargs
     ):
         super().__init__(**kwargs)
@@ -14,7 +15,7 @@ class VBox(Sticker):
 
         self.spacing = spacing
         self.padding = padding
-        
+        self.align_items = align_items
         self.justify = justify 
 
     def measure(
@@ -89,10 +90,23 @@ class VBox(Sticker):
                 w,
                 h
             )
+            if self.align_items == "start": 
+                child_x = x + self.padding
+            elif self.align_items == "center":
+                child_x = (
+                    x + (w - child_w)/2
+                )
+            elif self.align_items == "end":
+                child_x = (
+                    x + w - child_w - self.padding
+                )
+            else: 
+                child_x = x + self.padding
+            
 
             child.render(
                 ctx,
-                x+self.padding,
+                child_x,
                 current_y, 
                 child_w,
                 child_h

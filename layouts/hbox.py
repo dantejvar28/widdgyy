@@ -7,6 +7,7 @@ class Hbox(Sticker):
             spacing=0,
             padding=0,
             justify="start",
+            align_items="start",
             **kwargs
             ):
         super().__init__(**kwargs)
@@ -16,6 +17,7 @@ class Hbox(Sticker):
         self.spacing=spacing
         self.padding = padding
         self.justify = justify
+        self.align_items = align_items 
     def measure(
             self,
             ctx,
@@ -55,35 +57,48 @@ class Hbox(Sticker):
                 h
             )
             children_width += child_w
-            if self.children:
-                children_width += (
-                    len(self.children)-1
-                ) * self.spacing
-            if self.justify == "start":
-                current_x = x + self.padding
-            elif self.justify == "center":
-                current_x = (
-                    x+ (w - children_width) / 2
+        if self.children:
+            children_width += (
+                len(self.children)-1
+            ) * self.spacing
+        if self.justify == "start":
+            current_x = x + self.padding
+        elif self.justify == "center":
+            current_x = (
+                x+ (w - children_width) / 2
+            )
+        elif self.justify == "end":
+            current_x = (
+                x + w - children_width - self.padding
+            )
+        else: 
+            current_x = x + self.padding
+        for child in self.children:
+            child_w, child_h = child.measure(
+                ctx,
+                w,
+                h
+            )
+            if self.align_items == "start":
+                child_y = y + self.padding
+            elif self.align_items == "center":
+                child_y = (
+                    (y + (h - child_h)/2)
                 )
-            elif self.justify == "end":
-                current_x = (
-                    x + w - children_width - self.padding
+            elif self.align_items == "end":
+                child_y = (
+                    y + h - child_h - self.padding
                 )
-            else: 
-                current_x = x + self.padding
-            for child in self.children:
-                child_w, child_h = child.measure(
-                    ctx,
-                    w,
-                    h
-                )
-                child.render(
-                    ctx,
-                    current_x,
-                    y + self.padding,
-                    child_w,
-                    child_h
-                )
-                current_x += (
-                    child_w + self.spacing
-                )
+            else:
+                child_y = y + self.padding
+
+            child.render(
+                ctx,
+                current_x,
+                child_y,
+                child_w,
+                child_h
+            )
+            current_x += (
+                child_w + self.spacing
+            )
