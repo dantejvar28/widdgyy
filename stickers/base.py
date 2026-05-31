@@ -10,6 +10,11 @@ class Sticker:
             offset_y=0,
             width=0,
             height=0,
+            margin=0,
+            margin_top=None,
+            margin_right=None,
+            margin_bottom=None,
+            margin_left=None,
             visible=True,
             z_index=0,
             update_interval=0,
@@ -25,6 +30,11 @@ class Sticker:
 
         self.width = width
         self.height = height
+
+        self.margin_top = margin if margin_top is None else margin_top
+        self.margin_right = margin if margin_right is None else margin_right
+        self.margin_bottom = margin if margin_bottom is None else margin_bottom
+        self.margin_left =  margin if margin_left is None else margin_left
 
         self.visible = visible
         self.z_index = z_index
