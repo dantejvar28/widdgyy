@@ -102,3 +102,8 @@ class Hbox(Sticker):
             current_x += (
                 child_w + self.spacing
             )
+
+    def update(self, delta):
+        for child in self.children:
+            if child.should_update(delta):
+                child.update(delta)

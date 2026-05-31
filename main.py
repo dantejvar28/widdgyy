@@ -8,18 +8,16 @@ from core.scene import Scene
 from core.config_loader import ConfigLoader
 from core.css_loader import CSSLoader
 from core.hot_reload import HotReload
+from utils.paths import user_config_dir
 
 class App(Gtk.Application):
     def do_activate(self):
         scene = Scene()
-        loader = ConfigLoader(
-            "/home/daniel/.config/widdgyy/config.jsonc"
-        )
+        config_dir = user_config_dir()
+        loader = ConfigLoader(config_dir / "config.jsonc")
         loader.load_scene(scene)
 
-        css_loader=CSSLoader(
-            "/home/daniel/.config/widdgyy/styles.css"
-        )
+        css_loader=CSSLoader(config_dir / "styles.css")
         css_loader.load()
         
         hot_reload = HotReload(

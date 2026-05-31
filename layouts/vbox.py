@@ -114,3 +114,8 @@ class VBox(Sticker):
             current_y += (
                 child_h + self.spacing
             )  
+
+    def update(self, delta):
+        for child in self.children:
+            if child.should_update(delta):
+                child.update(delta)
