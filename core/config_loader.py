@@ -6,6 +6,7 @@ from stickers.clock import ClockSticker
 from stickers.api_text import APITextSticker
 from layouts.hbox import Hbox
 from layouts.vbox import VBox
+from layouts.grid import Grid
 
 class ConfigLoader:
 
@@ -176,6 +177,32 @@ class ConfigLoader:
                     "z_index",0
                 )
 
+            )
+        elif sticker_type == "grid":
+            children=[]
+            for child_data in data.get("children",[]):
+                children.append(
+                    self.create_sticker(child_data)
+                )
+            return Grid(
+                children=children,
+
+                columns=data.get("columns",2),
+                spacing=data.get("spacing",0),
+                padding=data.get("padding",0),
+
+                anchor=data.get(
+                    "anchor","top-left"
+                ),
+                offset_x=data.get(
+                    "offset_x",0
+                ),
+                offset_y=data.get(
+                    "offset_y",0
+                ),
+                z_index=data.get(
+                    "z_index",0
+                )
             )
 
         raise ValueError(
