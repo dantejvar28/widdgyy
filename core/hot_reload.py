@@ -16,6 +16,7 @@ class HotReload:
 
         self.config_mtime = 0
         self.css_mtime = 0 
+        self.is_reloading = False
 
     def apply_styles(self, sticker):
         sticker.style = self.css_loader.get_style(
@@ -28,17 +29,31 @@ class HotReload:
                 self.apply_styles(child)
 
     def start(self):
+        # Initialize mtimes to avoid an immediate reload on startup.
+        self.config_mtime = self._safe_mtime(
+            self.config_loader.path
+        )
+        self.css_mtime = self._safe_mtime(
+            self.css_loader.path
+        )
+
         GLib.timeout_add(
             1000,
             self.check_changes
         )
 
+    def _safe_mtime(self, path):
+        try:
+            return os.path.getmtime(path)
+        except OSError:
+            return 0
+
     def check_changes(self):
-        config_time=os.path.getmtime(
+        config_time = self._safe_mtime(
             self.config_loader.path
         )
 
-        css_time = os.path.getmtime(
+        css_time = self._safe_mtime(
             self.css_loader.path
         )
 
@@ -53,14 +68,24 @@ class HotReload:
         if changed:
             self.reload()
         return True
+
     def reload(self):
+        if self.is_reloading:
+            return
+
+        self.is_reloading = True
         print("Reloading...")
-        self.scene.clear()
+        try:
+            self.scene.clear()
 
-        self.config_loader.load_scene(
-            self.scene
-        )
+            self.config_loader.load_scene(
+                self.scene
+            )
 
-        self.css_loader.load()
-        for sticker in self.scene.stickers:
-            self.apply_styles(sticker)
+            self.css_loader.load()
+            for sticker in self.scene.stickers:
+                self.apply_styles(sticker)
+        except Exception as err:
+            print(f"HotReload error: {err}")
+        finally:
+            self.is_reloading = False

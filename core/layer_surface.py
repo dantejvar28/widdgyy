@@ -23,8 +23,8 @@ class LayerSurface:
         #Transparent background 
         self.window.set_opacity(1.0)
 
-        #Fullscreen
-        self.window.fullscreen()
+        # Let layer-shell control sizing/placement on the desktop layer.
+        self.window.set_default_size(1, 1)
     # CSS test hardcoded for now, should be moved to a separate file
     def setup_css(self):
 
@@ -47,11 +47,21 @@ class LayerSurface:
         
         Gtk4LayerShell.init_for_window(self.window)
 
+        for edge in (
+            Gtk4LayerShell.Edge.TOP,
+            Gtk4LayerShell.Edge.RIGHT,
+            Gtk4LayerShell.Edge.BOTTOM,
+            Gtk4LayerShell.Edge.LEFT,
+        ):
+            Gtk4LayerShell.set_anchor(self.window, edge, True)
+
         Gtk4LayerShell.set_layer(
             self.window,
             Gtk4LayerShell.Layer.BACKGROUND
         )
 
+        Gtk4LayerShell.set_namespace(self.window, "widdgyy")
+        Gtk4LayerShell.set_exclusive_zone(self.window, -1)
         Gtk4LayerShell.set_keyboard_mode(
             self.window,
             Gtk4LayerShell.KeyboardMode.NONE
