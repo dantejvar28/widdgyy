@@ -38,6 +38,9 @@ class TextSticker(Sticker):
             return fallback
 
     def render(self, ctx, x, y, w, h):
+        
+        self.draw_box(ctx, x, y, w, h)
+
         font_size = self.font_size
         color = self.color
 
