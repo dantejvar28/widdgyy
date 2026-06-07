@@ -104,11 +104,47 @@ class Sticker:
             w,
             h
     ):
+        shadow = (
+            self.style.get("box_shadow")
+            or self.style.get("box-shadow")
+        )
         background = (
             self.style.get("background_color")
             or self.style.get("background-color")
             or self.style.get("background")
         )
+        radius = self.parse_radius(
+            self.style.get("border_radius")
+            or self.style.get("border-radius")
+            or 0
+        )
+        if shadow:
+            shadow_data = self.parse_box_shadow(shadow)
+            if shadow_data:
+                offset_x, offset_y, blur, color = shadow_data
+                r, g, b, a = self.parse_color(color)
+
+                ctx.save()
+                ctx.new_path()
+
+                # Cairo has no direct box-blur primitive; approximate by layering
+                # expanded rounded-rect fills with reduced alpha.
+                passes = max(1, min(8, int(blur / 2) + 1))
+                for i in range(passes):
+                    spread = 0.0 if blur <= 0 else (blur * i / max(1, passes - 1))
+                    alpha = a / passes
+                    ctx.set_source_rgba(r, g, b, alpha)
+                    self.rounded_rect(
+                        ctx,
+                        x + offset_x - spread,
+                        y + offset_y - spread,
+                        w + spread * 2,
+                        h + spread * 2,
+                        radius + spread,
+                    )
+                    ctx.fill()
+                ctx.restore()
+
         if not background:
             return
         
@@ -118,11 +154,6 @@ class Sticker:
         # Ensure each sticker box uses an isolated path and does not inherit
         # leftover geometry from previous draw operations.
         ctx.new_path()
-        radius = self.parse_radius(
-            self.style.get("border_radius")
-            or self.style.get("border-radius")
-            or 0
-        )
         self.rounded_rect(ctx,x,y,w,h,radius)
         ctx.fill()
         border_width = self.parse_radius(
@@ -153,6 +184,21 @@ class Sticker:
 
         try:
             return max(0.0, float(text))
+        except ValueError:
+            return 0.0
+
+    def parse_length(self, value, allow_negative=False):
+        if isinstance(value, (int, float)):
+            number = float(value)
+            return number if allow_negative else max(0.0, number)
+
+        text = str(value).strip().lower()
+        if text.endswith("px"):
+            text = text[:-2].strip()
+
+        try:
+            number = float(text)
+            return number if allow_negative else max(0.0, number)
         except ValueError:
             return 0.0
     
@@ -218,3 +264,32 @@ class Sticker:
         ctx.line_to(x, y + radius)
         ctx.arc(x + radius, y + radius, radius, math.pi, 3 * math.pi / 2)
         ctx.close_path()
+
+    def parse_box_shadow(self,value):
+        parts = value.split()
+        if len(parts) < 3:
+            return None
+
+        offset_x = self.parse_length(parts[0], allow_negative=True)
+        offset_y = self.parse_length(parts[1], allow_negative=True)
+        blur = self.parse_length(parts[2])
+
+        color = " ".join(parts[3:]).strip() or "rgba(0,0,0,0.35)"
+
+        return (
+            offset_x,
+            offset_y,
+            blur,
+            color
+        )
+    
+    def get_opacity(self):
+        try:
+            return float(
+                self.style.get(
+                    "opacity",
+                    1.0
+                )
+            )
+        except:
+            return 1.0
