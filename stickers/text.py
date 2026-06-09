@@ -39,36 +39,133 @@ class TextSticker(Sticker):
         except Exception:
             return fallback
 
+    def _resolve_font_size(self):
+        if "font_size" in self.style:
+            return float(self.style["font_size"])
+        if "font-size" in self.style:
+            return float(self.style["font-size"])
+        return float(self.font_size)
+
+    def _resolve_font_family(self):
+        return (
+            self.style.get("font_family")
+            or self.style.get("font-family")
+            or "Sans"
+        )
+    def _resolve_font_weight(self):
+        return (
+            self.style.get("font_weight") or 
+            self.style.get("font-weight") or
+            "normal"
+        )
+    
+    def _resolve_font_style(self):
+        return (
+            self.style.get("font_style") or 
+            self.style.get("font-style") or
+            "normal"
+        )
+
+    def _build_layout(self, ctx):
+        layout = PangoCairo.create_layout(ctx)
+        layout.set_text(self.text, -1)
+
+        font_desc = Pango.FontDescription()
+        font_desc.set_family(self._resolve_font_family())
+        font_desc.set_size(int(self._resolve_font_size() * Pango.SCALE))
+
+        weight= self._resolve_font_weight()
+        if weight == "bold":
+            font_desc.set_weight(Pango.Weight.BOLD)
+        elif weight == "light":
+            font_desc.set_weight(Pango.Weight.LIGHT)
+        elif weight == "ultralight":
+            font_desc.set_weight(Pango.Weight.ULTRALIGHT)
+        elif weight == "semibold":
+            font_desc.set_weight(Pango.Weight.SEMIBOLD)
+        elif weight == "heavy":
+            font_desc.set_weight(Pango.Weight.HEAVY)
+        else: 
+            font_desc.set_weight(Pango.Weight.NORMAL)
+        
+        style = self._resolve_font_style()
+
+        if style == "italic":
+            font_desc.set_style(Pango.Style.ITALIC)
+        elif style == "oblique":
+            font_desc.set_style(Pango.Style.OBLIQUE)
+        else:
+            font_desc.set_style(Pango.Style.NORMAL)
+        
+        layout.set_font_description(font_desc)
+
+        align=(
+            self.style.get("text_align") or 
+            self.style.get("text-align") or
+            "left"
+        ).lower()
+
+        if align == "center":
+            layout.set_alignment(Pango.Alignment.CENTER)
+        elif align == "right":
+            layout.set_alignment(Pango.Alignment.RIGHT)
+        else:
+            layout.set_alignment(Pango.Alignment.LEFT)
+        
+        width = (
+            self.style.get("width")
+            or self.style.get("max_width") 
+            or self.style.get("max-width")
+        )
+        if width:
+            width_value = self.parse_length(width)
+            if width_value > 0:
+                layout.set_width(
+                    int(width_value * Pango.SCALE)
+                )
+
+                wrap = (
+                    self.style.get("text_wrap")
+                    or self.style.get("text-wrap")
+                    or "wrap"
+                ).lower()
+
+                if wrap in ("nowrap", "no-wrap", "none"):
+                    layout.set_wrap(Pango.WrapMode.WORD)
+                    overflow = (
+                        self.style.get("text_overflow")
+                        or self.style.get("text-overflow")
+                        or "clip"
+                    ).lower()
+                    if overflow == "ellipsis":
+                        layout.set_ellipsize(Pango.EllipsizeMode.END)
+                    else:
+                        layout.set_ellipsize(Pango.EllipsizeMode.NONE)
+                else:
+                    layout.set_wrap(Pango.WrapMode.WORD_CHAR)
+                    layout.set_ellipsize(Pango.EllipsizeMode.NONE)
+
+        return layout
+
     def render(self, ctx, x, y, w, h):
         ctx.save()
         ctx.push_group()
         self.draw_box(ctx, x, y, w, h)
+
+        ctx.save()
+        ctx.new_path()
+        ctx.rectangle(x, y, w, h)
+        ctx.clip()
         
-        font_size = self.font_size
         color = self.color
 
-        if "font_size" in self.style:
-            font_size = float(
-                self.style["font_size"]
-            )
-        elif "font-size" in self.style:
-            font_size = float(
-                self.style["font-size"]
-            )
         if "color" in self.style:
             color = self._parse_style_color(
                 self.style["color"],
                 color
             )
 
-        layout = PangoCairo.create_layout(ctx)
-        layout.set_text(self.text, -1)
-
-        font_desc = Pango.FontDescription()
-        font_desc.set_family("Sans")
-        font_desc.set_size(int(font_size * Pango.SCALE))
-
-        layout.set_font_description(font_desc)
+        layout = self._build_layout(ctx)
         
         shadow = self.style.get("text_shadow") or self.style.get("text-shadow")
         if shadow:
@@ -92,6 +189,8 @@ class TextSticker(Sticker):
         ctx.set_source_rgba(*color)
         ctx.move_to(x, y)
         PangoCairo.show_layout(ctx, layout)
+
+        ctx.restore()
         
         ctx.pop_group_to_source()
         ctx.paint_with_alpha(
@@ -100,24 +199,17 @@ class TextSticker(Sticker):
         ctx.restore()
     
     def measure(self, ctx, screen_width, screen_height):
-        
-        font_size = self.font_size
-        if "font_size" in self.style:
-            font_size = float(
-                self.style["font_size"]
-            )
-        elif "font-size" in self.style:
-            font_size = float(
-                self.style["font-size"]
-            )
-        layout = PangoCairo.create_layout(ctx)
-        layout.set_text(self.text, -1)
-        font_desc = Pango.FontDescription()
-        font_desc.set_family("Sans")
-        font_desc.set_size(int(font_size * Pango.SCALE))
-        layout.set_font_description(font_desc)
-        width, height = layout.get_pixel_size()
-        return width, height
+        layout = self._build_layout(ctx)
+        text_w, text_h = layout.get_pixel_size()
+        style_width =(
+            self.style.get("width")
+            or self.style.get("max_width")
+            or self.style.get("max-width")
+        )
+        if style_width:
+            text_w = self.parse_length(style_width)
+
+        return text_w, text_h
 
     def parse_text_shadow(
             self,
