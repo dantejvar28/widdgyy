@@ -58,7 +58,15 @@ class MediaSticker(Sticker):
     def render(self, ctx, x, y, w, h):
         if not self.backend:
             return
-        self.backend.render(ctx, x, y, w, h)
+        draw_w, draw_h = self.measure(
+            ctx,
+            w,
+            h
+        )
+        draw_x = x + (w - draw_w) / 2
+        draw_y = y + (h - draw_h) / 2
+
+        self.backend.render(ctx, draw_x, draw_y, draw_w, draw_h)
 
     def measure(self, ctx, screen_width, screen_height):
 
@@ -104,19 +112,4 @@ class MediaSticker(Sticker):
         screen_width,
         screen_height
     ):
-        if not self.backend:
-            return 0, 0
-
-        original_w, original_h = self.backend.measure(
-            ctx,
-            screen_width,
-            screen_height
-        )
-
-        width = resolve_unit(self.width, screen_width)
-        height = resolve_unit(self.height, screen_height)
-
-        width = original_w if width is None else width
-        height = original_h if height is None else height
-
-        return width, height
+        return self.measure(ctx, screen_width, screen_height)
