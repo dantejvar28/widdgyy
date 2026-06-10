@@ -3,7 +3,9 @@ from gi.repository import GdkPixbuf
 
 from stickers.base import Sticker
 from utils.units import resolve_unit
-
+"""
+Deprecated: This class is no longer used. The functionality has been moved to MediaSticker in media.py
+"""
 class ImageSticker(Sticker):
     
     def __init__(

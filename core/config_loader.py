@@ -4,6 +4,7 @@ from stickers.text import TextSticker
 from stickers.image import ImageSticker
 from stickers.clock import ClockSticker
 from stickers.api_text import APITextSticker
+from stickers.media import MediaSticker
 from layouts.hbox import Hbox
 from layouts.vbox import VBox
 from layouts.grid import Grid
@@ -58,12 +59,13 @@ class ConfigLoader:
                 css_class=css_class
             )
 
-        elif sticker_type == "image":
-
-            return ImageSticker(
+        elif sticker_type == "media":
+            return MediaSticker(
                 path=data["path"],
                 width=data.get("width"),
                 height=data.get("height"),
+                autoplay=data.get("autoplay", True),
+                loop=data.get("loop", True),
                 x=get_value("x", default=0),
                 y=get_value("y", default=0),
                 **self.get_margin_kwargs(data),

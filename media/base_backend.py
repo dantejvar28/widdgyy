@@ -1,0 +1,12 @@
+class MediaBackend:
+    def update(self, delta):
+        pass
+
+    def measure(self, ctx, sw, sh):
+        raise NotImplementedError
+
+    def render(self, ctx, x, y, w, h):
+        raise NotImplementedError
+
+    def destroy(self):
+        pass
