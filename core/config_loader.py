@@ -1,13 +1,17 @@
 import commentjson as json
 
 from stickers.text import TextSticker
-from stickers.image import ImageSticker
 from stickers.clock import ClockSticker
 from stickers.api_text import APITextSticker
 from stickers.media import MediaSticker
 from layouts.hbox import Hbox
 from layouts.vbox import VBox
 from layouts.grid import Grid
+"""
+image sticker has been deprecated in favor of media sticker, which can support images, gifs and videos. 
+The type field in config.jsonc should be updated from "image" to "media" for existing image stickers.
+"""
+
 
 class ConfigLoader:
 
