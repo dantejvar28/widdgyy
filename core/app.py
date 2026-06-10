@@ -1,19 +1,34 @@
-from gi.repository import Gtk
+import gi 
 
+gi.require_version('Gtk', '4.0')
+
+from gi.repository import Gtk
+from core.layer_surface import LayerSurface
+from core.scene import Scene
 from core.config_loader import ConfigLoader
-from core.scene import Scene 
-from core.layer_surface import LayerSurface 
+from core.css_loader import CSSLoader
+from core.hot_reload import HotReload
 from utils.paths import user_config_dir
 
-from stickers.text import TextSticker
-from stickers.image import ImageSticker
-
 class App(Gtk.Application):
-
     def do_activate(self):
         scene = Scene()
-        loader = ConfigLoader(user_config_dir() / "config.jsonc")
-
+        config_dir = user_config_dir()
+        loader = ConfigLoader(config_dir / "config.jsonc")
         loader.load_scene(scene)
+
+        css_loader=CSSLoader(config_dir / "styles.css")
+        css_loader.load()
+        
+        hot_reload = HotReload(
+            scene,
+            loader,
+            css_loader
+        )
+        hot_reload.start()
+
+        for sticker in scene.stickers:
+            hot_reload.apply_styles(sticker)
+
         surface=LayerSurface(self,scene)
         surface.show()
