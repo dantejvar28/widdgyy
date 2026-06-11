@@ -1,4 +1,6 @@
 import commentjson as json
+from pathlib import Path
+import os
 
 from stickers.text import TextSticker
 from stickers.clock import ClockSticker
@@ -16,8 +18,30 @@ The type field in config.jsonc should be updated from "image" to "media" for exi
 class ConfigLoader:
 
     def __init__(self, path):
+        self.path = Path(path)
 
-        self.path = path
+    def resolve_media_path(self, raw_path):
+        raw = os.path.expandvars(str(raw_path)).strip()
+        if raw.startswith("file://"):
+            return raw
+
+        path = Path(raw).expanduser()
+
+        if path.is_absolute():
+            return str(path)
+
+        candidates = [
+            Path.cwd() / path,
+            self.path.parent / path,
+            path,
+        ]
+
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate.resolve())
+
+        # Keep a deterministic fallback for missing files so error logs are clear.
+        return str((self.path.parent / path).resolve())
 
     def load_scene(self, scene):
 
@@ -65,7 +89,7 @@ class ConfigLoader:
 
         elif sticker_type == "media":
             return MediaSticker(
-                path=data["path"],
+                path=self.resolve_media_path(data["path"]),
                 width=data.get("width"),
                 height=data.get("height"),
                 autoplay=data.get("autoplay", True),

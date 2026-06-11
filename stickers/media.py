@@ -2,6 +2,7 @@ from stickers.base import Sticker
 from pathlib import Path
 
 from media.image_backend import ImageBackend
+from media.video_backend import VideoBackend
 from utils.units import resolve_unit
 
 class MediaSticker(Sticker):
@@ -49,7 +50,11 @@ class MediaSticker(Sticker):
     def load_gif(self):
         pass
     def load_video(self):
-        pass
+        self.backend=VideoBackend(
+            self.path,
+            autoplay=self.autoplay,
+            loop=self.loop
+        )
 
     def update(self, delta):
         if self.backend:
@@ -78,6 +83,20 @@ class MediaSticker(Sticker):
             screen_width,
             screen_height
         )
+
+        # Some backends (e.g. video) can report 0x0 before first frame decode.
+        # Avoid division-by-zero and return a safe placeholder size.
+        if original_w <= 0 or original_h <= 0:
+            target_width = resolve_unit(self.width, screen_width)
+            target_height = resolve_unit(self.height, screen_height)
+
+            if target_width is not None and target_height is not None:
+                return target_width, target_height
+            if target_width is not None:
+                return target_width, target_width
+            if target_height is not None:
+                return target_height, target_height
+            return 0, 0
 
         target_width = resolve_unit(self.width, screen_width)
         target_height = resolve_unit(self.height, screen_height)
