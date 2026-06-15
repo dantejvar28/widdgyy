@@ -9,3 +9,35 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+test/
+
+# Rust
+/target/
+
+# Opcional para librerías
+# Cargo.lock
+
+# VSCode
+.vscode/
+
+# JetBrains
+.idea/
+*.iml
+
+# CLion
+cmake-build-*/
+
+# Backups
+*.rs.bk
+*~
+
+# Logs
+*.log
+
+# Tempo
+*.tmp
+*.temp
+
+# SO
+.DS_Store
+Thumbs.db
