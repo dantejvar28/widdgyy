@@ -13,7 +13,7 @@ test/
 
 # Rust
 /target/
-
+native/video/target/
 # Opcional para librerías
 # Cargo.lock
 
