@@ -1,0 +1,20 @@
+[package]
+name = "widdgyy_video"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "widdgyy_video"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.29", features = ["extension-module"] }
+gstreamer = "0.25"
+
+gstreamer-play = "0.25"
+
+glib = "0.22"
+gtk4 = "0.11"
+
+
+
