@@ -1,6 +1,8 @@
 use pyo3::prelude::*;
 use gstreamer as gst;
 use gst::prelude::*;
+use gstreamer_pbutils::{Discoverer,DiscovererInfo};
+use gstreamer_app::AppSink;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum VideoState {
@@ -14,12 +16,14 @@ struct VideoBackend {
     path:String,
     state:VideoState,
 
-    pipeline: Option<gst::Element>,
+    pipeline: Option<gst::Pipeline>,
+    appsink: Option<gst_app::AppSink>,
 
     loaded: bool,
 
     width:u32,
     height:u32,
+    frame: Option<gst::Buffer>,
 
     duration:u64,
     current_time:u64,
@@ -37,44 +41,60 @@ impl VideoBackend {
     #[new]
     fn new(path: String) -> Self {
         gst::init().unwrap();
-        let uri = gst::Uri::from_file_path(&path)
-            .unwrap()
-            .into_string();
+        let uri = glib::filename_to_uri(
+            std::fs::canonicalize(&path).unwrap(),
+            None,
+        )
+        .unwrap();
+        
+        let pipeline = gst::parse::launch(
+            &format!(
+                "filesrc location=\"{}\" !\
+                decodebin !\
+                videoconvert !\
+                video\x-raw,format=BGRA !\
+                appsink name=sink",
+                path
+            )
+        ).unwrap()
+        let pipeline = pipeline.downcast::<gst::Pipeline>().unwrap();
 
-        let pipeline = gst::ElementFactory::make("playbin")
-            .property("uri", uri)
-            .build()
+        let appsink = pipeline 
+            .by_name("sink")
+            .unwrap()
+            .downcast::<AppSink>()
             .unwrap();
 
-        let _ = pipeline.set_state(gst::State::Paused);
         let bus = pipeline.bus().unwrap();
-
-        bus.timed_pop_filtered(
+        let _ =bus.timed_pop_filtered(
             gst::ClockTime::from_seconds(5),
-            &[
-                gst::MessageType::AsyncDone, 
-                gst::MessageType::Error,
-                gst::MessageType::StateChanged,
-                ],
+            &[gst::MessageType::AsyncDone, gst::MessageType::Error],
         );
-        if let Some(duration) = pipeline.query_duration::<gst::ClockTime>() {
-            println!("{}", duration.mseconds());
-        }
+        
 
+        let duration = pipeline
+            .query_duration::<gst::ClockTime>()
+            .map(|d| d.mseconds())
+            .unwrap_or(0);
+        let mut loaded = duration > 0;
+        let mut width = 0;
+        let mut height = 0;
+        let mut fps = 0.0;
+        
         VideoBackend {
             path,
             state: VideoState::Stopped,
             pipeline: Some(pipeline),   
-            loaded: false, 
-            width: 0,
-            height: 0,
-            duration: duration.mseconds(),
+            loaded, 
+            width,
+            height,
+            duration,
             current_time: 0,
             
             looped: false,
             volume: 1.0,
             muted: false,
-            fps: 0.0,
+            fps,
         }
     }
 // -----------Getters ------------
@@ -211,9 +231,11 @@ impl VideoBackend {
     }
 
     fn update (&mut self, _delta:f64){
-        if let Some(pipeline) = &self.pipeline{
-            if let Some(pos)= pipeline.query_position::<gst::ClockTime>(){
-                self.current_time = pos.mseconds();
+        if let Some(appsink)=&self.appsink{
+            if let Some(sample) = appsink.try_pull_sample(gst::ClockTime::ZERO){
+                let buffer = sample.buffer().unwrap();
+                let map = buffer.map_readable().unwrap();
+                let pixels = map.as_slice();
             }
         }
     }
