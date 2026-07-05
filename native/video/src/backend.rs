@@ -43,6 +43,13 @@ impl VideoBackend {
         }
 
         let media_file = MediaFile::for_filename(&path);
+        // Fallback for environments where loop property alone does not restart playback on EOS.
+        media_file.connect_ended_notify(|media_file| {
+            if media_file.is_loop() && media_file.is_ended() {
+                media_file.seek(0);
+                media_file.play();
+            }
+        });
         let video_widget = VideoWidget::new(&media_file);
 
         Ok(VideoBackend {
@@ -102,6 +109,10 @@ impl VideoBackend {
 
     fn set_looped(&self, looped: bool) {
         self.media_file.set_loop(looped);
+        if looped && self.media_file.is_ended() {
+            self.media_file.seek(0);
+            self.media_file.play();
+        }
     }
     
 //  -----------------------Getters for python--------------------------
