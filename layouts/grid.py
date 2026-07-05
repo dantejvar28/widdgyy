@@ -111,5 +111,15 @@ class Grid(Sticker):
             )
 
     def update(self,delta):
+        dirty = False
         for child in self.children:
-            child.update(delta)
+            if child.should_update(delta):
+                result = child.update(delta)
+                dirty = bool(result) or dirty
+
+            if getattr(child, "consume_dirty", None) and child.consume_dirty():
+                dirty = True
+
+        if dirty:
+            self.mark_dirty()
+        return dirty

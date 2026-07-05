@@ -69,13 +69,16 @@ class APITextSticker(TextSticker):
                     for name, path in self.fields.items():
                         values[name] = self.extract_json_path(data, path)
                     self.text = self.template.format(**values)
+                    self.mark_dirty()
                     return
                 except Exception:
                     pass
 
             self.text = "API timeout/error"
+            self.mark_dirty()
         except Exception:
             self.text = "API timeout/error"
+            self.mark_dirty()
         finally:
             self.loading = False
 
@@ -88,3 +91,4 @@ class APITextSticker(TextSticker):
             target=self.fetch_data,
             daemon=True
         ).start()
+        return True

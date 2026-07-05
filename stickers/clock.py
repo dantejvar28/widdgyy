@@ -20,3 +20,5 @@ class ClockSticker(TextSticker):
 
     def update(self, delta):
         self.update_clock()
+        self.mark_dirty()
+        return True

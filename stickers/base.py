@@ -44,6 +44,16 @@ class Sticker:
         self.style = {}
         self.update_interval = update_interval
         self.elapsed_time = 0
+        self.dirty = True
+
+    def mark_dirty(self):
+        self.dirty = True
+
+    def consume_dirty(self):
+        if not self.dirty:
+            return False
+        self.dirty = False
+        return True
 
     def should_update(self, delta):
         if self.update_interval <=0:
@@ -62,7 +72,7 @@ class Sticker:
         return self.measure(ctx,screen_width,screen_height)
 
     def update(self,delta):
-        pass
+        return False
     def render(self, ctx,x,y,w,h):
         pass 
 
