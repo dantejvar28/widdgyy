@@ -1,9 +1,6 @@
 mod backend;
-mod pipeline;
-mod player;
-mod gl_widget;
+mod video_widget;
 mod state;
-mod metadata;
 
 use pyo3::prelude::*;
 use pyo3::types::PyModule;

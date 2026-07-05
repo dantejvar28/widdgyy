@@ -60,6 +60,33 @@ class MediaSticker(Sticker):
         if self.backend:
             self.backend.update(delta)
 
+    def uses_native_widget(self):
+        return bool(self.backend and hasattr(self.backend, "attach_overlay"))
+
+    def native_widget(self):
+        if self.uses_native_widget() and hasattr(self.backend, "widget"):
+            return self.backend.widget()
+        return None
+
+    def native_background(self):
+        return self.z_index < 0
+
+    def attach_native_widget(self, overlay):
+        if self.uses_native_widget():
+            self.backend.attach_overlay(overlay)
+
+    def detach_native_widget(self):
+        if self.uses_native_widget() and hasattr(self.backend, "detach_overlay"):
+            self.backend.detach_overlay()
+
+    def hide_native_widget(self):
+        if self.uses_native_widget() and hasattr(self.backend, "hide"):
+            self.backend.hide()
+
+    def show_native_widget(self):
+        if self.uses_native_widget() and hasattr(self.backend, "show"):
+            self.backend.show()
+
     def render(self, ctx, x, y, w, h):
         if not self.backend:
             return

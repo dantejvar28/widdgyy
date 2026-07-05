@@ -11,13 +11,12 @@ pub fn create_pipeline(path: &str) -> gst::Pipeline {
     )
     .unwrap();
 
-    gst::parse::launch(
-        &format!(
-            "playbin uri={}",
-            uri
-        )
-    )
-    .unwrap()
-    .downcast::<gst::Pipeline>()
-    .unwrap()
+    let pipeline = gst::ElementFactory::make("playbin")
+        .property("uri", uri)
+        .build()
+        .unwrap();
+
+    pipeline
+        .downcast::<gst::Pipeline>()
+        .unwrap()
 }

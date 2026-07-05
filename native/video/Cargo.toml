@@ -9,12 +9,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { version = "0.29", features = ["extension-module"] }
-gstreamer = "0.25"
-gstreamer-video = "0.25"
-gstreamer-gl = "0.25"
-gstreamer-pbutils = "0.25"
-gstreamer-app="0.25"
-
 glib = "0.22"
 gtk4 = "0.11"
 
