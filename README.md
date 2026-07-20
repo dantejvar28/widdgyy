@@ -1,6 +1,40 @@
 # Widdgyy
 
-Python project with a GTK interface to render text and image stickers.
+Widdgyy is an open-source desktop ricing engine for Linux that turns your wallpaper into a living workspace.
+
+Create clocks, images, text, weather panels, system monitors, and API-powered stickers that are rendered directly on the desktop using GTK. Everything is configured with simple JSON and styled with CSS, making it easy to build highly customized layouts without writing a full desktop extension.
+
+Unlike traditional widget tools, Widdgyy focuses on a modern, hackable workflow:
+
+- JSON for layout
+- CSS for styling
+- Python for rapid widget development
+- GTK 4 for native Wayland/Linux integration
+# Why Python? 
+
+Widdgyy was intentionally started in Python to optimize for experimentation and community contribution. The goal is to make creating a new widget feel as easy as writing a small Python class, not compiling an entire desktop application.
+
+This allows contributors to prototype ideas quickly:
+
+Spotify widgets
+weather integrations
+calendar panels
+custom API dashboards
+animated stickers
+productivity overlays
+Performance-first architecture
+
+The long-term vision is a hybrid architecture: keep the widget ecosystem accessible in Python while moving performance-critical components (such as video rendering, animation, and low-level rendering pipelines) to Rust.
+
+This approach aims to provide the best of both worlds:
+
+Python → fast iteration, plugins, accessibility
+Rust → low CPU usage, smooth rendering, memory safety
+The goal
+
+Widdgyy is not just a widget app.
+
+It is an attempt to build a next-generation desktop ricing framework: lightweight, extensible, Wayland-friendly, and enjoyable for both artists and developers who want their desktop to be programmable, beautiful, and alive.
 
 ## License
 
