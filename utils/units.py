@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 def resolve_unit(value,total_size):
 
     if value is None:

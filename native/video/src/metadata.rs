@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Daniel
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use gstreamer as gst;
 use gst::prelude::*;
 

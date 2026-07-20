@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 import gi 
 
 gi.require_version('Gtk', '4.0')

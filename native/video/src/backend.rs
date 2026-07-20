@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Daniel
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use pyo3::prelude::*;
 use pyo3::exceptions::PyRuntimeError;
 use gtk4::prelude::*;

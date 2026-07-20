@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 class Scene:
     def __init__(self):
         self.stickers=[]
