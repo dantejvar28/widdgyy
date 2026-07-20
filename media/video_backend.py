@@ -42,6 +42,9 @@ class NativeVideoBackend(MediaBackend):
             self.play()
 
         self._loop_threshold_ms = 120
+        self._last_bounds = None
+        self._loop_poll_interval = 0.25
+        self._loop_poll_elapsed = 0.0
 
     def attach_overlay(self, overlay):
         if self._overlay is overlay and self._attached:
@@ -82,6 +85,12 @@ class NativeVideoBackend(MediaBackend):
         # GTK loop mode can be inconsistent on some systems. Keep a Python-side
         # fallback that restarts playback when the stream reaches EOS.
         try:
+            self._loop_poll_elapsed += delta
+            if self._loop_poll_elapsed < self._loop_poll_interval:
+                return False
+
+            self._loop_poll_elapsed = 0.0
+
             if not self._backend.looped:
                 return False
 
@@ -105,7 +114,12 @@ class NativeVideoBackend(MediaBackend):
         return self._backend.width, self._backend.height
 
     def render(self, ctx, x, y, w, h):
-        self._backend.set_bounds(int(x), int(y), max(1, int(w)), max(1, int(h)))
+        bounds = (int(x), int(y), max(1, int(w)), max(1, int(h)))
+        if bounds == self._last_bounds:
+            return
+
+        self._backend.set_bounds(*bounds)
+        self._last_bounds = bounds
 
     def destroy(self):
         self.stop()
