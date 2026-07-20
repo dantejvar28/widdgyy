@@ -40,6 +40,12 @@ It is an attempt to build a next-generation desktop ricing framework: lightweigh
 
 GPL-3.0-or-later. See `LICENSE`.
 
+## Contributing
+
+- Read `CONTRIBUTING.md` for development setup and pull request workflow.
+- Follow `CODE_OF_CONDUCT.md` for community standards.
+- Use issue and pull request templates under `.github/`.
+
 ## Pip packages
 
 Install in your environment:
