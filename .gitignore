@@ -17,6 +17,13 @@ native/video/target/
 # Opcional para librerías
 # Cargo.lock
 
+# Arch packaging artifacts (makepkg)
+packaging/aur/pkg/
+packaging/aur/src/
+packaging/aur/widdgyy-git/
+packaging/aur/*.pkg.tar.*
+packaging/aur/*.src.tar.*
+
 # VSCode
 .vscode/
 

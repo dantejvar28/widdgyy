@@ -30,5 +30,8 @@ _ensure_layer_shell_preload()
 
 
 if __name__ == "__main__":
-    app=App()
-    app.run()
+    try:
+        app = App()
+        app.run()
+    except KeyboardInterrupt:
+        print("Exiting...")

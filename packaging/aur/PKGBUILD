@@ -1,7 +1,7 @@
 # Maintainer: Daniel <daniel@example.com>
 
 pkgname=widdgyy-git
-pkgver=r0.g0000000
+pkgver=r41.g8134549
 pkgrel=1
 pkgdesc="GTK4 layer-shell desktop widget renderer with text, media and layout stickers"
 arch=('x86_64')
@@ -48,7 +48,9 @@ package() {
   cp -r media "${pkgdir}/usr/share/widdgyy/"
   cp -r stickers "${pkgdir}/usr/share/widdgyy/"
   cp -r utils "${pkgdir}/usr/share/widdgyy/"
-  cp -r assets "${pkgdir}/usr/share/widdgyy/"
+  if [[ -d assets ]]; then
+    cp -r assets "${pkgdir}/usr/share/widdgyy/"
+  fi
   install -m644 main.py "${pkgdir}/usr/share/widdgyy/main.py"
   install -m644 README.md "${pkgdir}/usr/share/widdgyy/README.md"
   install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
