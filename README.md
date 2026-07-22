@@ -79,19 +79,36 @@ From `packaging/aur/`:
 makepkg -si
 ```
 
-## Local terminal command
+## Install helper script
 
-To install a user-level `widdgyy` command (without sudo):
+The repository includes `scripts/install-local-cli.sh` with two install modes:
+
+- Local launcher mode (default): installs `~/.local/bin/widdgyy` pointing to your current clone.
+- Package mode: builds and installs from `packaging/aur/` using `makepkg -si`.
+
+### 1) Local launcher (no package build)
 
 ```bash
 ./scripts/install-local-cli.sh
+# or
+./scripts/install-local-cli.sh local
 ```
 
-After that, run:
+This installs only a launcher in `~/.local/bin/widdgyy`. It does not copy the full repository into `~/.local/bin`.
+
+Then run:
 
 ```bash
 widdgyy
 ```
+
+### 2) Build and install package (Arch/CachyOS)
+
+```bash
+./scripts/install-local-cli.sh package
+```
+
+This runs `makepkg -si` inside `packaging/aur/` and installs the built package on the machine.
 
 ### Publish to AUR
 
