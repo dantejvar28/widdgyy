@@ -1,7 +1,7 @@
 # Maintainer: Daniel <daniel@example.com>
 
 pkgname=widdgyy-git
-pkgver=r41.g8134549
+pkgver=r0.g0000000
 pkgrel=1
 pkgdesc="GTK4 layer-shell desktop widget renderer with text, media and layout stickers"
 arch=('x86_64')
