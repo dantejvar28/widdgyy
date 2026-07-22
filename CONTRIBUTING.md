@@ -63,7 +63,7 @@ cargo test
 
 ## Pull Requests
 
-- Open a PR against `main`.
+- Open a PR against `develop`.
 - Fill in the PR template completely.
 - Link related issues.
 - Include screenshots or short videos for UI changes.
