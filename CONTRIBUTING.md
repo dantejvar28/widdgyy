@@ -5,29 +5,29 @@ Thanks for your interest in contributing.
 ## Quick Start
 
 1. Fork the repository and clone your fork.
-2. Create a branch from `main`:
+2. Create a branch from `develop`:
 
 ```bash
 git checkout -b feat/my-change
 ```
 
-3. Create and activate a virtual environment:
+3. Install runtime and development dependencies (without `venv`):
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m pip install --user -r requirements-dev.txt
 ```
 
-4. Install runtime and development dependencies:
-
-```bash
-pip install -r requirements-dev.txt
-```
-
-5. Run the project:
+4. Run the project:
 
 ```bash
 python3 main.py
+```
+
+5. Optional: install the local launcher:
+
+```bash
+./scripts/install-local-cli.sh
+widdgyy
 ```
 
 ## Development Workflow
@@ -49,7 +49,7 @@ python3 main.py
 Run these checks before opening a PR:
 
 ```bash
-python -m compileall .
+python3 -m compileall .
 ```
 
 For native video code:
