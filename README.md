@@ -10,6 +10,9 @@ Unlike traditional widget tools, Widdgyy focuses on a modern, hackable workflow:
 - CSS for styling
 - Python for rapid widget development
 - GTK 4 for native Wayland/Linux integration
+
+If you are getting started, read the [Configuration & Styling Guide](docs/Configuration%20%26%20Styling%20Guide.md) first. It explains where to place `config.jsonc` and `styles.css`, how sticker classes map to CSS, and which properties are supported today.
+
 # Why Python? 
 
 Widdgyy was intentionally started in Python to optimize for experimentation and community contribution. The goal is to make creating a new widget feel as easy as writing a small Python class, not compiling an entire desktop application.
@@ -62,6 +65,8 @@ sudo apt install -y python3-gi gir1.2-gtk-4.0 gir1.2-gtk4-layer-shell-1.0
 ## Run
 
 python3 main.py
+
+Before you create your first layout, read the [Configuration & Styling Guide](docs/Configuration%20%26%20Styling%20Guide.md). It shows how to create `config.jsonc` and `styles.css`, and how sticker classes map to CSS.
 
 ## AUR packaging layout
 
