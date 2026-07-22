@@ -35,9 +35,6 @@ Python → fast iteration, plugins, accessibility
 Rust → low CPU usage, smooth rendering, memory safety
 The goal
 
-Widdgyy is not just a widget app.
-
-It is an attempt to build a next-generation desktop ricing framework: lightweight, extensible, Wayland-friendly, and enjoyable for both artists and developers who want their desktop to be programmable, beautiful, and alive.
 
 ## License
 
