@@ -52,12 +52,37 @@ Install in your environment:
 
 pip install commentjson pycairo PyGObject
 
-## System dependencies (Linux)
+## System Dependencies (Linux)
 
-To make GI/GTK work correctly, also install:
+To make GI/GTK work correctly, install the required packages for your distribution.
 
+### Debian / Ubuntu
+
+```bash
 sudo apt update
-sudo apt install -y python3-gi gir1.2-gtk-4.0 gir1.2-gtk4-layer-shell-1.0
+sudo apt install -y \
+    python3-gi \
+    gir1.2-gtk-4.0 \
+    gir1.2-gtk4-layer-shell-1.0
+```
+
+### Fedora
+
+```bash
+sudo dnf install -y \
+    python3-gobject \
+    gtk4 \
+    gtk4-layer-shell
+```
+
+### Arch Linux / CachyOS / EndeavourOS / Manjaro
+
+```bash
+sudo pacman -S --needed \
+    python-gobject \
+    gtk4 \
+    gtk4-layer-shell
+```
 
 ## Run
 
