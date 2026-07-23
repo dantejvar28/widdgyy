@@ -215,8 +215,24 @@ class Sticker:
         except ValueError:
             return 0.0
     
-    def parse_color(self,value):
-        value = value.strip()
+    def parse_color(self, value, fallback=None):
+        if value is None:
+            if fallback is None:
+                return (0, 0, 0, 0)
+            return self.parse_color(fallback)
+
+        if isinstance(value, (tuple, list)):
+            if len(value) == 4:
+                r, g, b, a = value
+                return (float(r), float(g), float(b), float(a))
+            if len(value) == 3:
+                r, g, b = value
+                return (float(r), float(g), float(b), 1.0)
+            if fallback is not None:
+                return self.parse_color(fallback)
+            return (0, 0, 0, 0)
+
+        value = str(value).strip()
         # Accept CSS-like quoted color values, e.g. "#88F54C".
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
             value = value[1:-1].strip()
@@ -257,7 +273,9 @@ class Sticker:
                 b = int(hex[4:6],16)/255
                 a = int(hex[6:8],16)/255
                 return (r,g,b,a)
-        return (0,0,0,0)
+        if fallback is not None:
+            return self.parse_color(fallback)
+        return (0, 0, 0, 0)
     def rounded_rect(self,ctx,x,y,w,h,radius):
         radius = min (radius, w/2, h/2)
 
