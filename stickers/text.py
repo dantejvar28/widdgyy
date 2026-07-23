@@ -21,27 +21,6 @@ class TextSticker(Sticker):
         self.font_size = font_size
         self.color = color
 
-    def _parse_style_color(self, raw_color, fallback):
-        try:
-            parts = [float(p.strip()) for p in raw_color.split(",")]
-            if len(parts) == 3:
-                parts.append(1.0)
-            if len(parts) != 4:
-                return fallback
-
-            # Accept RGB either in 0-1 or 0-255. Keep alpha in 0-1, or map >1 as 0-255.
-            r, g, b, a = parts
-            if any(value > 1.0 for value in (r, g, b)):
-                r, g, b = r / 255.0, g / 255.0, b / 255.0
-            if a > 1.0:
-                a = a / 255.0
-
-            parts = [r, g, b, a]
-
-            return tuple(max(0.0, min(1.0, value)) for value in parts)
-        except Exception:
-            return fallback
-
     def _resolve_font_size(self):
         if "font_size" in self.style:
             return float(self.style["font_size"])
@@ -163,7 +142,7 @@ class TextSticker(Sticker):
         color = self.color
 
         if "color" in self.style:
-            color = self._parse_style_color(
+            color = self.parse_color(
                 self.style["color"],
                 color
             )
