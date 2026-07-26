@@ -90,6 +90,13 @@ Main fields:
 - `font_size` or `font-size`
 - All common positioning and margin fields
 
+`fields` supports dotted JSON paths, list indexes with brackets, and inline filters.
+
+Examples:
+
+- `daily.time[0]`
+- `daily.time[0]|weekday_short`
+
 ### `media`
 
 Main fields:
