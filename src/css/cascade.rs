@@ -179,6 +179,10 @@ pub struct Stylesheet {
     pub keyframes: HashMap<String, Keyframes>,
     pub font_faces: Vec<FontFace>,
     pub errors: Vec<String>,
+    /// Properties seen in the stylesheet that the engine does not implement.
+    pub unsupported_properties: BTreeMap<String, usize>,
+    /// At-rules that were skipped.
+    pub unsupported_at_rules: Vec<String>,
 }
 
 impl Stylesheet {
@@ -213,6 +217,17 @@ impl Stylesheet {
             if declarations.is_empty() {
                 continue;
             }
+            for declaration in &declarations {
+                if declaration.name.starts_with("--") {
+                    continue;
+                }
+                if !declaration_supported(&declaration.name, &declaration.value) {
+                    *self
+                        .unsupported_properties
+                        .entry(declaration.name.clone())
+                        .or_default() += 1;
+                }
+            }
             self.rules.push(StyleRule {
                 selectors,
                 declarations,
@@ -235,9 +250,10 @@ impl Stylesheet {
         if let Some(condition) = lower.strip_prefix("@media") {
             let query = MediaQuery::parse(condition.trim());
             self.parse_blocks(body, Some(&query), order);
-        } else if let Some(condition) = lower.strip_prefix("@supports") {
-            let _ = condition;
-            self.parse_blocks(body, inherited_media, order);
+        } else if let Some(condition) = prelude.strip_prefix("@supports") {
+            if supports_condition(condition) {
+                self.parse_blocks(body, inherited_media, order);
+            }
         } else if let Some(name) = lower
             .strip_prefix("@keyframes")
             .or_else(|| lower.strip_prefix("@-webkit-keyframes"))
@@ -292,12 +308,13 @@ impl Stylesheet {
                     style,
                 });
             }
-        } else if let Some(inner) = lower.strip_prefix("@layer") {
-            let _ = inner;
-            self.parse_blocks(body, inherited_media, order);
         } else if lower.starts_with("@import") {
             self.errors
                 .push("@import is not supported; inline the imported file".to_string());
+        } else if lower.starts_with("@layer") {
+            self.parse_blocks(body, inherited_media, order);
+        } else {
+            self.unsupported_at_rules.push(prelude.to_string());
         }
     }
 
@@ -522,6 +539,73 @@ fn cascade_key(matched: &Matched<'_>) -> (bool, u64, bool) {
 /// Parse an inline style attribute (`"color: red; font-size: 12px"`).
 pub fn parse_inline_style(value: &str) -> Vec<RawDeclaration> {
     parser::parse_raw_declarations(value)
+}
+
+/// Check whether the engine knows a property/value pair.
+pub fn declaration_supported(name: &str, value: &str) -> bool {
+    let mut declarations = Declarations::default();
+    declarations.apply(name, value, Color::new([1.0, 1.0, 1.0, 1.0]))
+}
+
+fn supports_condition(condition: &str) -> bool {
+    let text = condition.trim();
+    let text = text
+        .strip_prefix("not ")
+        .map(|rest| (true, rest.trim()))
+        .or_else(|| {
+            text.strip_prefix("not(")
+                .map(|rest| (true, rest.trim_end_matches(')').trim()))
+        })
+        .unwrap_or((false, text));
+
+    let (negate, text) = text;
+    let result = if let Some((left, right)) = split_supports(text, " and ") {
+        supports_condition(left) && supports_condition(right)
+    } else if let Some((left, right)) = split_supports(text, " or ") {
+        supports_condition(left) || supports_condition(right)
+    } else if let Some(inner) = strip_outer_parens(text) {
+        let inner = inner.trim();
+        if let Some(selector) = inner.strip_prefix("selector(") {
+            parse_selector_list(selector.trim_end_matches(')')).is_ok()
+        } else if let Some((name, value)) = inner.split_once(':') {
+            declaration_supported(name.trim(), value.trim())
+        } else {
+            true
+        }
+    } else {
+        true
+    };
+    if negate { !result } else { result }
+}
+
+fn split_supports<'a>(text: &'a str, keyword: &str) -> Option<(&'a str, &'a str)> {
+    let mut depth = 0_i32;
+    let mut index = 0;
+    while index + keyword.len() <= text.len() {
+        let ch = text[index..].chars().next()?;
+        match ch {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ => {}
+        }
+        if depth == 0 && text[index..].starts_with(keyword) {
+            return Some((&text[..index], &text[index + keyword.len()..]));
+        }
+        index += ch.len_utf8();
+    }
+    None
+}
+
+fn strip_outer_parens(text: &str) -> Option<&str> {
+    let text = text.trim();
+    if !text.starts_with('(') {
+        return None;
+    }
+    let close = parser::find_matching(text, 0, '(', ')')?;
+    if close + 1 != text.len() {
+        return None;
+    }
+    Some(&text[1..close])
 }
 
 #[cfg(test)]

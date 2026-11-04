@@ -254,7 +254,9 @@ If a family exists but does not ship the exact weight/style (common for display 
 
 ### Effects
 
-`opacity`, `box-shadow`, `text-shadow`, `filter`, `backdrop-filter`, `mix-blend-mode`, `transform`, `transform-origin`, `clip-path`, `isolation`, `object-fit`, `object-position`.
+`opacity`, `box-shadow`, `text-shadow`, `mix-blend-mode`, `transform`, `transform-origin`, `clip-path`, `isolation`, `object-fit`, `object-position`.
+
+`filter` and `backdrop-filter` are parsed but still need the layer/filter pipeline.
 
 `text-shadow` blur is approximated with a sampled glyph disk (Vello has no arbitrary glyph blur). Larger blur radii visibly feather further; the pass count is capped for animated scenes.
 
@@ -274,7 +276,9 @@ Explicit `grid-column`/`grid-row` placement is parsed, but the layout engine cur
 
 ### Animation and transitions
 
-`animation*`, `transition*` and `@keyframes` are parsed into typed values. `@keyframes` blocks are stored in the stylesheet (`Stylesheet::keyframes`). Property interpolation is the next planned milestone; the parser already exposes the data needed for it.
+`animation*` and `@keyframes` are applied at runtime for `transform`, `opacity`, `color` and `background-color`, including duration, delay, timing functions, direction, iteration count and fill mode. Multiple animations per node are supported.
+
+`transition*` is parsed but not wired to style changes yet. Layout-affecting animations (width/height/margin/padding) are also pending.
 
 ### Media queries
 
@@ -311,6 +315,7 @@ If the new config cannot be parsed, the previous scene is kept and the error is 
 
 ```bash
 RUST_LOG=widdgyy=debug ./target/release/widdgyy
+widdgyy --check-css
 ```
 
 Useful messages: missing fonts, failed media loads, unsupported CSS properties, API failures, watcher errors.

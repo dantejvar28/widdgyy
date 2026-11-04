@@ -14,10 +14,12 @@
 //! * [`platform`] — Wayland layer-shell host.
 //! * [`config`] — JSON5 configuration loader.
 
+pub mod animation;
 pub mod api;
 pub mod app;
 pub mod config;
 pub mod css;
+pub mod diagnostics;
 pub mod layout;
 pub mod media;
 pub mod platform;

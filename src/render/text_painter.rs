@@ -23,7 +23,7 @@ pub fn paint_text(node: &Node, transform: &Affine, canvas: &mut Scene, engine: &
     let content_x = node.layout.content_x;
     let content_y = node.layout.content_y;
     let origin = *transform * Affine::translate((content_x as f64, content_y as f64));
-    let color = node.style.text.color;
+    let color = node.text_color();
 
     paint_text_shadows(node, &shaped, &origin, canvas);
     draw_shaped(canvas, &shaped, &origin, color);
@@ -138,6 +138,7 @@ fn shape(
         weight: node.style.text.weight,
         style: node.style.text.style,
         letter_spacing: node.style.text.letter_spacing_px,
+        word_spacing: node.style.text.word_spacing_px,
         max_width,
         align: node.style.text.align,
         white_space: node.style.text.white_space,
@@ -185,7 +186,7 @@ fn paint_decoration(
         .as_ref()
         .map(|length| length.resolve(&context, Axis::Vertical))
         .unwrap_or_else(|| (node.style.text.font_size_px / 14.0).max(1.0));
-    let color = decoration.color.unwrap_or(node.style.text.color);
+    let color = decoration.color.unwrap_or(node.text_color());
     let stroke = match decoration.style {
         BorderStyle::Dashed => Stroke::new(thickness as f64)
             .with_dashes(0.0, [thickness as f64 * 3.0, thickness as f64 * 2.0]),

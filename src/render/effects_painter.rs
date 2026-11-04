@@ -18,7 +18,7 @@ pub struct Layer {
 }
 
 pub fn node_transform(node: &Node, context: &ResolveContext) -> Affine {
-    if node.style.effects.transform.is_empty() {
+    if node.transform().is_empty() {
         return Affine::IDENTITY;
     }
     let width = node.layout.width;
@@ -32,7 +32,7 @@ pub fn node_transform(node: &Node, context: &ResolveContext) -> Affine {
         .clamp(0.0, height);
     let resolve = |length: &Length| length.resolve(context, crate::css::Axis::Horizontal);
     let mut matrix = Affine::IDENTITY;
-    for operation in &node.style.effects.transform {
+    for operation in node.transform() {
         matrix *= operation.to_affine(resolve);
     }
     Affine::translate((origin_x as f64, origin_y as f64))
@@ -46,7 +46,7 @@ pub fn begin_effects(
     box_rect: &Rect,
     canvas: &mut Scene,
 ) -> Layer {
-    let opacity = node.style.effects.opacity.clamp(0.0, 1.0);
+    let opacity = node.opacity().clamp(0.0, 1.0);
     let blend = node.style.effects.mix_blend_mode;
     let clip = clip_shape(node, box_rect);
 

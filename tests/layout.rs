@@ -79,3 +79,67 @@ fn padding_and_centering_are_applied() {
     assert!(label.layout.y >= 20.0, "child ignored card padding");
     assert!(label.absolute_x > card.absolute_x);
 }
+
+#[test]
+fn positions_absolute_and_relative_children() {
+    let css = Stylesheet::parse(
+        r#"
+        .root { width: 500px; height: 300px; padding: 20px; position: relative; }
+        .abs { position: absolute; left: 10px; top: 15px; width: 40px; height: 30px; }
+        .rel { position: relative; left: 5px; top: 7px; width: 20px; height: 10px; }
+        "#,
+    );
+    let mut scene = Scene::new(Viewport {
+        width: 500.0,
+        height: 300.0,
+        scale_factor: 1.0,
+    });
+    let mut root = Node::container("vbox", vec!["root".to_string()]);
+    let mut abs = Node::text("text", vec!["abs".to_string()], "a");
+    abs.anchor = Anchor::TopLeft;
+    let mut rel = Node::text("text", vec!["rel".to_string()], "r");
+    rel.anchor = Anchor::TopLeft;
+    root.children.push(abs);
+    root.children.push(rel);
+    scene.roots.push(root);
+    let mut text = TextEngine::new();
+    scene.resolve_styles(&css);
+    scene.layout(&mut LayoutEngine::new(&mut text));
+    let root = &scene.roots[0];
+    let abs = &root.children[0];
+    let rel = &root.children[1];
+    assert!((abs.layout.x - 30.0).abs() < 0.5, "{}", abs.layout.x);
+    assert!((abs.layout.y - 35.0).abs() < 0.5, "{}", abs.layout.y);
+    assert!(rel.layout.x >= 20.0);
+    assert!(rel.layout.y >= 20.0);
+}
+
+#[test]
+fn flex_order_changes_layout_order() {
+    let css = Stylesheet::parse(
+        r#"
+        .root { display: flex; width: 300px; height: 50px; }
+        .a { order: 2; width: 30px; height: 20px; }
+        .b { order: 1; width: 30px; height: 20px; }
+        .c { order: 3; width: 30px; height: 20px; }
+        "#,
+    );
+    let mut scene = Scene::new(Viewport {
+        width: 300.0,
+        height: 50.0,
+        scale_factor: 1.0,
+    });
+    let mut root = Node::container("hbox", vec!["root".to_string()]);
+    for class in ["a", "b", "c"] {
+        let mut node = Node::text("text", vec![class.to_string()], class);
+        node.anchor = Anchor::TopLeft;
+        root.children.push(node);
+    }
+    scene.roots.push(root);
+    let mut text = TextEngine::new();
+    scene.resolve_styles(&css);
+    scene.layout(&mut LayoutEngine::new(&mut text));
+    let children = &scene.roots[0].children;
+    assert!(children[1].layout.x < children[0].layout.x);
+    assert!(children[0].layout.x < children[2].layout.x);
+}

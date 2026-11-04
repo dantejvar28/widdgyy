@@ -118,6 +118,13 @@ impl Calc {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum LengthFunc {
+    Min(Vec<Length>),
+    Max(Vec<Length>),
+    Clamp(Length, Length, Length),
+}
+
 /// A CSS length. `Auto` is accepted for margins, insets and sizes.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub enum Length {
@@ -139,6 +146,7 @@ pub enum Length {
     Fr(f32),
     Auto,
     Calc(Box<Calc>),
+    Func(Box<LengthFunc>),
     #[default]
     Zero,
 }
@@ -181,6 +189,19 @@ impl Length {
             Self::Fr(v) => *v,
             Self::Auto | Self::Zero => 0.0,
             Self::Calc(calc) => calc.resolve(ctx, axis),
+            Self::Func(func) => match func.as_ref() {
+                LengthFunc::Min(values) => values
+                    .iter()
+                    .map(|value| value.resolve(ctx, axis))
+                    .fold(f32::INFINITY, f32::min),
+                LengthFunc::Max(values) => values
+                    .iter()
+                    .map(|value| value.resolve(ctx, axis))
+                    .fold(f32::NEG_INFINITY, f32::max),
+                LengthFunc::Clamp(min, value, max) => value
+                    .resolve(ctx, axis)
+                    .clamp(min.resolve(ctx, axis), max.resolve(ctx, axis)),
+            },
         }
     }
 
@@ -192,8 +213,25 @@ impl Length {
         if text.eq_ignore_ascii_case("auto") {
             return Ok(Self::Auto);
         }
-        if text.eq_ignore_ascii_case("calc(") || text.to_ascii_lowercase().starts_with("calc(") {
+        let lower = text.to_ascii_lowercase();
+        if lower.starts_with("calc(") {
             return parse_calc(text).map(|c| Self::Calc(Box::new(c)));
+        }
+        if let Some((name, args)) = parse_function(text) {
+            let values = split_args(args)
+                .into_iter()
+                .map(Length::parse)
+                .collect::<Result<Vec<_>, _>>()?;
+            return match name.as_str() {
+                "min" if !values.is_empty() => Ok(Self::Func(Box::new(LengthFunc::Min(values)))),
+                "max" if !values.is_empty() => Ok(Self::Func(Box::new(LengthFunc::Max(values)))),
+                "clamp" if values.len() == 3 => Ok(Self::Func(Box::new(LengthFunc::Clamp(
+                    values[0].clone(),
+                    values[1].clone(),
+                    values[2].clone(),
+                )))),
+                _ => parse_number_unit(text),
+            };
         }
         parse_number_unit(text)
     }
@@ -521,8 +559,41 @@ impl fmt::Display for Length {
             Self::Auto => write!(f, "auto"),
             Self::Zero => write!(f, "0"),
             Self::Calc(_) => write!(f, "calc(...)"),
+            Self::Func(_) => write!(f, "min/max/clamp(...)"),
         }
     }
+}
+
+fn parse_function(text: &str) -> Option<(String, &str)> {
+    let open = text.find('(')?;
+    let name = text[..open].trim().to_ascii_lowercase();
+    if !text.trim_end().ends_with(')') {
+        return None;
+    }
+    let close = text.rfind(')')?;
+    if close <= open {
+        return None;
+    }
+    Some((name, &text[open + 1..close]))
+}
+
+fn split_args(input: &str) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut start = 0;
+    let mut depth = 0_i32;
+    for (index, ch) in input.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => {
+                result.push(input[start..index].trim());
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    result.push(input[start..].trim());
+    result
 }
 
 #[cfg(test)]

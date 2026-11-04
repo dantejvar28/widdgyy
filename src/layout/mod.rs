@@ -10,7 +10,9 @@
 use crate::css::Viewport;
 use crate::css::computed::ComputedStyle;
 use crate::css::properties::media_object_fit::ObjectFit;
-use crate::css::properties::{AlignItems, Display, FlexDirection, JustifyContent, TrackSize};
+use crate::css::properties::{
+    AlignItems, Display, FlexDirection, JustifyContent, Position, TrackSize,
+};
 use crate::css::values::{Axis, Edges, ResolveContext};
 use crate::scene::{Node, NodeKind};
 use crate::text::{ShapeRequest, TextEngine};
@@ -97,6 +99,7 @@ impl<'a> LayoutEngine<'a> {
                     weight: style.text.weight,
                     style: style.text.style,
                     letter_spacing: style.text.letter_spacing_px,
+                    word_spacing: style.text.word_spacing_px,
                     max_width,
                     align: style.text.align,
                     white_space: style.text.white_space,
@@ -193,6 +196,93 @@ impl<'a> LayoutEngine<'a> {
             node.layout.draw_width = content_width;
             node.layout.draw_height = content_height;
         }
+        self.position_children(node, viewport);
+    }
+
+    fn position_children(&mut self, node: &mut Node, viewport: Viewport) {
+        let style = node.style.clone();
+        let context = viewport.context(
+            style.text.font_size_px,
+            node.layout.content_width,
+            node.layout.content_height,
+        );
+        let content_width = node.layout.content_width;
+        let content_height = node.layout.content_height;
+        let offset_x = node.layout.content_x;
+        let offset_y = node.layout.content_y;
+
+        for child in &mut node.children {
+            match child.style.position {
+                Position::Absolute | Position::Fixed => {
+                    self.layout_node(child, viewport, content_width, content_height);
+                    let left = child
+                        .style
+                        .left
+                        .as_ref()
+                        .map(|value| value.resolve(&context, Axis::Horizontal));
+                    let right = child
+                        .style
+                        .right
+                        .as_ref()
+                        .map(|value| value.resolve(&context, Axis::Horizontal));
+                    let top = child
+                        .style
+                        .top
+                        .as_ref()
+                        .map(|value| value.resolve(&context, Axis::Vertical));
+                    let bottom = child
+                        .style
+                        .bottom
+                        .as_ref()
+                        .map(|value| value.resolve(&context, Axis::Vertical));
+                    let x = match (left, right) {
+                        (Some(left), _) => left,
+                        (None, Some(right)) => content_width - right - child.layout.width,
+                        _ => 0.0,
+                    };
+                    let y = match (top, bottom) {
+                        (Some(top), _) => top,
+                        (None, Some(bottom)) => content_height - bottom - child.layout.height,
+                        _ => 0.0,
+                    };
+                    child.layout.x = offset_x + x;
+                    child.layout.y = offset_y + y;
+                }
+                Position::Relative => {
+                    let left = child
+                        .style
+                        .left
+                        .as_ref()
+                        .map(|value| value.resolve(&context, Axis::Horizontal));
+                    let right = child
+                        .style
+                        .right
+                        .as_ref()
+                        .map(|value| value.resolve(&context, Axis::Horizontal));
+                    let top = child
+                        .style
+                        .top
+                        .as_ref()
+                        .map(|value| value.resolve(&context, Axis::Vertical));
+                    let bottom = child
+                        .style
+                        .bottom
+                        .as_ref()
+                        .map(|value| value.resolve(&context, Axis::Vertical));
+                    child.layout.x += match (left, right) {
+                        (Some(left), _) => left,
+                        (None, Some(right)) => -right,
+                        _ => 0.0,
+                    };
+                    child.layout.y += match (top, bottom) {
+                        (Some(top), _) => top,
+                        (None, Some(bottom)) => -bottom,
+                        _ => 0.0,
+                    };
+                }
+                _ => {}
+            }
+        }
     }
 
     fn layout_flex_children(
@@ -220,9 +310,17 @@ impl<'a> LayoutEngine<'a> {
         let child_available_width = available_width.max(0.0);
         let child_available_height = available_height.max(0.0);
 
-        for child in &mut node.children {
+        let mut flow_indices: Vec<usize> = (0..node.children.len())
+            .filter(|index| !out_of_flow(&node.children[*index]))
+            .collect();
+        flow_indices.sort_by_key(|index| node.children[*index].style.flex.order);
+        if reverse {
+            flow_indices.reverse();
+        }
+
+        for index in &flow_indices {
             self.layout_node(
-                child,
+                &mut node.children[*index],
                 viewport,
                 child_available_width,
                 child_available_height,
@@ -235,19 +333,21 @@ impl<'a> LayoutEngine<'a> {
             style.flex.row_gap.resolve(&context, Axis::Vertical)
         }
         .max(0.0);
-        let gap_total = gap * (node.children.len().saturating_sub(1)) as f32;
+        let gap_total = gap * (flow_indices.len().saturating_sub(1)) as f32;
+        let flow_children: Vec<&Node> = flow_indices
+            .iter()
+            .map(|index| &node.children[*index])
+            .collect();
 
         let (intrinsic_main, intrinsic_cross) = if is_row {
-            let main = node
-                .children
+            let main = flow_children
                 .iter()
                 .map(|child| {
                     child.layout.margin.left + child.layout.width + child.layout.margin.right
                 })
                 .sum::<f32>()
                 + gap_total;
-            let cross = node
-                .children
+            let cross = flow_children
                 .iter()
                 .map(|child| {
                     child.layout.margin.top + child.layout.height + child.layout.margin.bottom
@@ -255,16 +355,14 @@ impl<'a> LayoutEngine<'a> {
                 .fold(0.0, f32::max);
             (main, cross)
         } else {
-            let main = node
-                .children
+            let main = flow_children
                 .iter()
                 .map(|child| {
                     child.layout.margin.top + child.layout.height + child.layout.margin.bottom
                 })
                 .sum::<f32>()
                 + gap_total;
-            let cross = node
-                .children
+            let cross = flow_children
                 .iter()
                 .map(|child| {
                     child.layout.margin.left + child.layout.width + child.layout.margin.right
@@ -290,25 +388,25 @@ impl<'a> LayoutEngine<'a> {
             JustifyContent::End => (free, 0.0),
             JustifyContent::Center => (free / 2.0, 0.0),
             JustifyContent::SpaceBetween => {
-                if node.children.len() > 1 {
-                    (0.0, free / (node.children.len() - 1) as f32)
+                if flow_indices.len() > 1 {
+                    (0.0, free / (flow_indices.len() - 1) as f32)
                 } else {
                     (0.0, 0.0)
                 }
             }
             JustifyContent::SpaceAround => {
-                if node.children.is_empty() {
+                if flow_indices.is_empty() {
                     (0.0, 0.0)
                 } else {
-                    let each = free / node.children.len() as f32;
+                    let each = free / flow_indices.len() as f32;
                     (each / 2.0, each)
                 }
             }
             JustifyContent::SpaceEvenly => {
-                if node.children.is_empty() {
+                if flow_indices.is_empty() {
                     (0.0, 0.0)
                 } else {
-                    let each = free / (node.children.len() + 1) as f32;
+                    let each = free / (flow_indices.len() + 1) as f32;
                     (each, each)
                 }
             }
@@ -316,13 +414,8 @@ impl<'a> LayoutEngine<'a> {
 
         let content_offset_x = horizontal_border.left + horizontal_padding.left;
         let content_offset_y = vertical_border.top + vertical_padding.top;
-        let indices: Vec<usize> = if reverse {
-            (0..node.children.len()).rev().collect()
-        } else {
-            (0..node.children.len()).collect()
-        };
 
-        for index in indices {
+        for index in flow_indices {
             let child = &mut node.children[index];
             let cross_start = child.layout.margin.top_or(is_row);
             let cross_size = if is_row {
@@ -464,6 +557,10 @@ impl MarginStart for Edges<f32> {
     fn top_or(&self, is_row: bool) -> f32 {
         if is_row { self.top } else { self.left }
     }
+}
+
+fn out_of_flow(node: &Node) -> bool {
+    matches!(node.style.position, Position::Absolute | Position::Fixed)
 }
 
 fn fit_size(

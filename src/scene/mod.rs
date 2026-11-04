@@ -12,8 +12,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::css::parser::RawDeclaration;
 use crate::css::selector::Element;
+use crate::css::values::TransformOp;
 use crate::css::{Cascade, ComputedStyle, Viewport};
 use crate::layout::{LayoutBox, LayoutEngine};
+use vello::peniko::Color;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Anchor {
@@ -112,6 +114,14 @@ pub struct MediaContent {
     pub revision: u64,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AnimatedStyle {
+    pub opacity: Option<f32>,
+    pub transform: Option<Vec<TransformOp>>,
+    pub color: Option<Color>,
+    pub background_color: Option<Color>,
+}
+
 #[derive(Clone, Debug)]
 pub enum NodeKind {
     Container,
@@ -129,9 +139,11 @@ pub struct Node {
     pub tag: String,
     pub id: Option<String>,
     pub classes: Vec<String>,
+    pub attributes: Vec<(String, String)>,
     pub kind: NodeKind,
     pub children: Vec<Node>,
     pub style: ComputedStyle,
+    pub animated: AnimatedStyle,
     pub layout: LayoutBox,
     pub anchor: Anchor,
     pub offset_x: f32,
@@ -157,9 +169,11 @@ impl Node {
             tag: tag.into(),
             id: None,
             classes,
+            attributes: Vec::new(),
             kind: NodeKind::Container,
             children: Vec::new(),
             style: ComputedStyle::default(),
+            animated: AnimatedStyle::default(),
             layout: LayoutBox::default(),
             anchor: Anchor::TopLeft,
             offset_x: 0.0,
@@ -200,6 +214,27 @@ impl Node {
         node
     }
 
+    pub fn opacity(&self) -> f32 {
+        self.animated.opacity.unwrap_or(self.style.effects.opacity)
+    }
+
+    pub fn transform(&self) -> &[TransformOp] {
+        self.animated
+            .transform
+            .as_deref()
+            .unwrap_or(&self.style.effects.transform)
+    }
+
+    pub fn text_color(&self) -> Color {
+        self.animated.color.unwrap_or(self.style.text.color)
+    }
+
+    pub fn background_color(&self) -> Color {
+        self.animated
+            .background_color
+            .unwrap_or(self.style.background.color)
+    }
+
     pub fn text_content(&self) -> Option<&TextContent> {
         match &self.kind {
             NodeKind::Text(content) => Some(content),
@@ -234,6 +269,7 @@ impl Node {
             tag: self.tag.clone(),
             id: self.id.clone(),
             classes: self.classes.clone(),
+            attributes: self.attributes.clone(),
             index,
             sibling_count,
         };
@@ -384,6 +420,7 @@ pub struct ElementDesc {
     pub tag: String,
     pub id: Option<String>,
     pub classes: Vec<String>,
+    pub attributes: Vec<(String, String)>,
     pub index: usize,
     pub sibling_count: usize,
 }
@@ -397,6 +434,7 @@ impl ElementDesc {
             self.index,
             self.sibling_count,
         )
+        .with_attributes(&self.attributes)
     }
 }
 

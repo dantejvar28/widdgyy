@@ -8,7 +8,7 @@
 //! document. That split keeps the Wayland code small and makes the runtime
 //! testable without a compositor.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
@@ -18,6 +18,7 @@ use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use vello::Scene as VelloScene;
 use vello::peniko::Mix;
 
+use crate::animation::{self, AnimationSet};
 use crate::api::ApiManager;
 use crate::config::ConfigLoader;
 use crate::css::properties::ClipPath;
@@ -48,6 +49,8 @@ pub struct Runtime {
     css_mtime: Option<std::time::SystemTime>,
     overlay_dirty: bool,
     fast_mode: bool,
+    animations: HashMap<u64, AnimationSet>,
+    animations_active: bool,
     dirty: bool,
 }
 
@@ -93,6 +96,8 @@ impl Runtime {
             css_mtime,
             overlay_dirty: true,
             fast_mode: false,
+            animations: HashMap::new(),
+            animations_active: false,
             dirty: true,
         };
         runtime.media.set_base_dir(runtime.config.config_dir());
@@ -229,6 +234,10 @@ impl Runtime {
         self.scene.layout(&mut LayoutEngine::new(&mut self.text));
         let paths = media_paths(&self.scene);
         self.media.retain_paths(&paths);
+        let now = Instant::now();
+        let (animations, active) = animation::prepare_scene(&mut self.scene, &self.stylesheet, now);
+        self.animations = animations;
+        self.animations_active = active;
         self.overlay_dirty = true;
         self.fast_mode = false;
         self.dirty = true;
@@ -257,6 +266,13 @@ impl Runtime {
         if media_changes.video {
             self.dirty = true;
         }
+        let (animation_changed, animation_active) =
+            animation::update_scene(&mut self.scene, &self.animations, now);
+        if animation_changed {
+            self.overlay_dirty = true;
+            self.dirty = true;
+        }
+        self.animations_active = animation_active;
         self.dirty
     }
 
@@ -370,7 +386,7 @@ impl Runtime {
                 NodeKind::Container => node.children.iter().any(node_animated),
             }
         }
-        self.scene.roots.iter().any(node_animated)
+        self.scene.roots.iter().any(node_animated) || self.animations_active
     }
 
     pub fn invalidate(&mut self) {
@@ -415,6 +431,7 @@ fn fast_style_ok(node: &Node) -> bool {
         || !style.effects.filters.is_empty()
         || !style.effects.backdrop_filters.is_empty()
         || style.effects.mix_blend_mode != Mix::Normal
+        || !style.animations.is_empty()
     {
         return false;
     }

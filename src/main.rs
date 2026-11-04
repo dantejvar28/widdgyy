@@ -10,6 +10,7 @@ fn main() -> anyhow::Result<()> {
     .init();
 
     let mut config_path = None;
+    let mut check_css = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -19,6 +20,7 @@ fn main() -> anyhow::Result<()> {
                         anyhow::anyhow!("--config requires a path")
                     })?));
             }
+            "--check-css" => check_css = true,
             "--help" | "-h" => {
                 println!(
                     "widdgyy {}\n\nUsage: widdgyy [--config PATH]\n\nDefault config: ~/.config/widdgyy/config.jsonc",
@@ -28,6 +30,10 @@ fn main() -> anyhow::Result<()> {
             }
             other => anyhow::bail!("unknown argument: {other} (try --help)"),
         }
+    }
+
+    if check_css {
+        return widdgyy::diagnostics::run(config_path);
     }
 
     widdgyy::platform::run(config_path)

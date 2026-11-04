@@ -78,11 +78,12 @@ pub fn paint_background(
     let shape = RoundedRect::from_rect(clip_rect, radii);
 
     let background = &node.style.background;
-    if background.color.components[3] > 0.0 {
+    let background_color = node.background_color();
+    if background_color.components[3] > 0.0 {
         canvas.fill(
             vello::peniko::Fill::NonZero,
             *transform,
-            background.color,
+            background_color,
             None,
             &shape,
         );

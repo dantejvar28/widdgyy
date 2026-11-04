@@ -31,6 +31,7 @@ struct CacheKey {
     style: u8,
     family_hash: u64,
     letter_spacing: u32,
+    word_spacing: u32,
     width: u32,
     align: u8,
     wrap: u8,
@@ -72,6 +73,7 @@ pub struct ShapeRequest<'a> {
     pub weight: u16,
     pub style: FontStyle,
     pub letter_spacing: f32,
+    pub word_spacing: f32,
     pub max_width: Option<f32>,
     pub align: TextAlign,
     pub white_space: WhiteSpace,
@@ -219,6 +221,7 @@ impl TextEngine {
                 .map(|family| hash_str(family))
                 .unwrap_or(0),
             letter_spacing: request.letter_spacing.to_bits(),
+            word_spacing: request.word_spacing.to_bits(),
             width: request.max_width.unwrap_or(-1.0).to_bits(),
             align: align_id(request.align),
             wrap: wrap_id(request),
@@ -289,13 +292,18 @@ impl TextEngine {
                 width: run.line_w,
             });
             for glyph in run.glyphs {
+                let spaces = run
+                    .text
+                    .get(..glyph.start.min(run.text.len()))
+                    .map(|prefix| prefix.chars().filter(|ch| ch.is_whitespace()).count())
+                    .unwrap_or(0);
                 collected.push((
                     glyph.font_id,
                     glyph.font_weight,
                     glyph.font_size,
                     run.line_y,
                     glyph.glyph_id,
-                    glyph.x,
+                    glyph.x + request.word_spacing * spaces as f32,
                     glyph.y,
                 ));
             }
@@ -458,6 +466,7 @@ mod tests {
             weight: 400,
             style: FontStyle::Normal,
             letter_spacing: 0.0,
+            word_spacing: 0.0,
             max_width: None,
             align: TextAlign::Left,
             white_space: WhiteSpace::Normal,
@@ -503,6 +512,7 @@ mod face_resolution_tests {
             weight: 300,
             style: FontStyle::Normal,
             letter_spacing: 0.0,
+            word_spacing: 0.0,
             max_width: None,
             align: TextAlign::Left,
             white_space: WhiteSpace::Normal,

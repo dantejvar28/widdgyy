@@ -23,9 +23,11 @@ The old Python implementation was removed. The JSON schema and the CSS class mod
 
 ## Features
 
-- **CSS, not ad-hoc properties:** selectors, specificity, `!important`, inheritance, custom properties (`--accent` / `var()`), `calc()`, media queries, shorthands, gradients, shadows, borders, transforms, clipping, flex and grid.
+- **CSS, not ad-hoc properties:** selectors, specificity, `!important`, inheritance, custom properties (`--accent` / `var()`), `calc()`, `min()/max()/clamp()`, media queries, shorthands, gradients, shadows, borders, transforms, clipping, flex and grid.
 - **Static CSS parsed once:** the frame loop never parses colors, lengths or selectors.
 - **Bounded caches:** text shaping and media assets have hard limits; reloading drops the old scene and releases its assets.
+- **Animations:** `@keyframes` for transform, opacity, colors and background-color, with delay/duration/direction/iteration/fill-mode.
+- **Diagnostics:** `widdgyy --check-css` lists unsupported properties and at-rules.
 - **Hot reload:** editing `config.jsonc` or `styles.css` rebuilds the scene without restarting.
 - **API stickers:** requests run on worker threads and report through a channel; the render loop never blocks on the network.
 - **Animated media:** GIF and video frames update through the same clock as widgets.
@@ -60,6 +62,8 @@ cargo build --release
 ./target/release/widdgyy
 # optional: use another config directory/file
 ./target/release/widdgyy --config /path/to/config.jsonc
+# audit unsupported CSS without opening a window
+./target/release/widdgyy --check-css
 
 # build without GStreamer/video support
 cargo build --release --no-default-features
@@ -161,7 +165,7 @@ Implemented in the renderer:
 - Text: family, size, weight, style, line-height, letter/word spacing, alignment, decoration, transform, white-space, wrapping, overflow/ellipsis, shadows. `font-stretch`, `font-variant-caps` and `vertical-align` are parsed but not applied by the shaper yet.
 - Effects: opacity, box-shadow, text-shadow, blend mode, transform/transform-origin, clip-path, isolation, object-fit/object-position.
 - Layout: flex (direction, justify, align-*, gap, order, grow/shrink/basis) and CSS grid templates/auto-flow. `flex-wrap` and explicit `grid-column`/`grid-row` placement are parsed; layout currently uses a single flex line and auto-placement.
-- Animations/transitions: parsed into typed values and `@keyframes` are available to the runtime. Property interpolation is the next milestone; see `src/css/properties/transition.rs`.
+- Animations: `@keyframes` applied at runtime for `transform`, `opacity`, `color` and `background-color`; timing functions, delay, direction, iteration and fill modes. Transitions and layout-affecting animations are still pending.
 - Media queries: width/height, orientation, `prefers-reduced-motion`, `prefers-color-scheme` parsing.
 - Selectors: type, `*`, `.class`, `#id`, `[attr]`, descendant/child combinators, `:root`, `:first-child`, `:last-child`, `:only-child`, `:nth-child()`, `:not()`, `:is()`, `:where()`.
 

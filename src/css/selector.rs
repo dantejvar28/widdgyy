@@ -68,12 +68,31 @@ pub enum Pseudo {
     Dynamic(String),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttrOp {
+    Exists,
+    Equals,
+    Includes,
+    DashMatch,
+    Prefix,
+    Suffix,
+    Substring,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AttrSelector {
+    pub name: String,
+    pub op: AttrOp,
+    pub value: Option<String>,
+    pub case_insensitive: bool,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Compound {
     pub tag: Option<String>,
     pub id: Option<String>,
     pub classes: Vec<String>,
-    pub attributes: Vec<(String, Option<String>)>,
+    pub attributes: Vec<AttrSelector>,
     pub pseudos: Vec<Pseudo>,
 }
 
@@ -86,7 +105,12 @@ impl Compound {
         };
         for pseudo in &self.pseudos {
             spec = spec.combine(match pseudo {
-                Pseudo::Not(_) | Pseudo::Is(_) | Pseudo::Where(_) => Specificity::ZERO,
+                Pseudo::Where(_) => Specificity::ZERO,
+                Pseudo::Not(selectors) | Pseudo::Is(selectors) => selectors
+                    .iter()
+                    .map(|selector| selector.specificity)
+                    .max_by_key(|specificity| specificity.key())
+                    .unwrap_or(Specificity::ZERO),
                 Pseudo::Root
                 | Pseudo::FirstChild
                 | Pseudo::LastChild
@@ -232,10 +256,22 @@ impl fmt::Display for Compound {
         for class in &self.classes {
             write!(f, ".{class}")?;
         }
-        for (name, value) in &self.attributes {
-            write!(f, "[{name}")?;
-            if let Some(value) = value {
-                write!(f, "=\"{value}\"")?;
+        for attribute in &self.attributes {
+            write!(f, "[{}", attribute.name)?;
+            let operator = match attribute.op {
+                AttrOp::Exists => None,
+                AttrOp::Equals => Some("="),
+                AttrOp::Includes => Some("~="),
+                AttrOp::DashMatch => Some("|="),
+                AttrOp::Prefix => Some("^="),
+                AttrOp::Suffix => Some("$="),
+                AttrOp::Substring => Some("*="),
+            };
+            if let (Some(operator), Some(value)) = (operator, &attribute.value) {
+                write!(f, "{operator}\"{value}\"")?;
+            }
+            if attribute.case_insensitive {
+                write!(f, " i")?;
             }
             write!(f, "]")?;
         }
@@ -264,10 +300,31 @@ impl Compound {
                 return false;
             }
         }
-        for (name, value) in &self.attributes {
-            match element.attribute(name) {
-                Some(actual) if value.as_deref().is_none_or(|expected| expected == actual) => {}
-                _ => return false,
+        for attribute in &self.attributes {
+            let Some(actual) = element.attribute(&attribute.name) else {
+                return false;
+            };
+            let Some(expected) = &attribute.value else {
+                continue;
+            };
+            let (actual, expected) = if attribute.case_insensitive {
+                (actual.to_ascii_lowercase(), expected.to_ascii_lowercase())
+            } else {
+                (actual.to_string(), expected.clone())
+            };
+            let matches = match attribute.op {
+                AttrOp::Exists => true,
+                AttrOp::Equals => actual == expected,
+                AttrOp::Includes => actual.split_whitespace().any(|part| part == expected),
+                AttrOp::DashMatch => {
+                    actual == expected || actual.starts_with(&format!("{expected}-"))
+                }
+                AttrOp::Prefix => actual.starts_with(&expected),
+                AttrOp::Suffix => actual.ends_with(&expected),
+                AttrOp::Substring => actual.contains(&expected),
+            };
+            if !matches {
+                return false;
             }
         }
         for pseudo in &self.pseudos {
@@ -333,6 +390,11 @@ impl<'a> Element<'a> {
             index,
             sibling_count,
         }
+    }
+
+    pub fn with_attributes(mut self, attributes: &'a [(String, String)]) -> Self {
+        self.attributes = attributes;
+        self
     }
 
     pub fn attribute(&self, name: &str) -> Option<&str> {
@@ -481,21 +543,7 @@ fn parse_compound(input: &str) -> Result<(Compound, usize), String> {
             '[' => {
                 let end = find_closing(&input[index..], '[', ']')?;
                 let inner = input[index + 1..index + end].trim();
-                let (name, value) = if let Some((name, value)) = inner.split_once('=') {
-                    (
-                        name.trim().to_string(),
-                        Some(
-                            value
-                                .trim()
-                                .trim_matches('"')
-                                .trim_matches('\'')
-                                .to_string(),
-                        ),
-                    )
-                } else {
-                    (inner.to_string(), None)
-                };
-                compound.attributes.push((name, value));
+                compound.attributes.push(parse_attribute_selector(inner));
                 index += end + 1;
                 has_any = true;
             }
@@ -513,6 +561,46 @@ fn parse_compound(input: &str) -> Result<(Compound, usize), String> {
         return Err(format!("invalid selector near: {input}"));
     }
     Ok((compound, index))
+}
+
+fn parse_attribute_selector(input: &str) -> AttrSelector {
+    let mut text = input.trim();
+    let case_insensitive = text
+        .strip_suffix(" i")
+        .or_else(|| text.strip_suffix(" I"))
+        .is_some();
+    if case_insensitive {
+        text = text.trim_end_matches(" i").trim_end_matches(" I").trim();
+    }
+    for (op, op_text) in [
+        (AttrOp::Includes, "~="),
+        (AttrOp::DashMatch, "|="),
+        (AttrOp::Prefix, "^="),
+        (AttrOp::Suffix, "$="),
+        (AttrOp::Substring, "*="),
+        (AttrOp::Equals, "="),
+    ] {
+        if let Some((name, value)) = text.split_once(op_text) {
+            return AttrSelector {
+                name: name.trim().to_string(),
+                op,
+                value: Some(
+                    value
+                        .trim()
+                        .trim_matches('"')
+                        .trim_matches('\'')
+                        .to_string(),
+                ),
+                case_insensitive,
+            };
+        }
+    }
+    AttrSelector {
+        name: text.to_string(),
+        op: AttrOp::Exists,
+        value: None,
+        case_insensitive,
+    }
 }
 
 fn parse_pseudo(input: &str) -> Result<(Pseudo, usize), String> {

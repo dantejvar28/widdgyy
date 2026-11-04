@@ -150,6 +150,97 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str, _current: Color) 
             }
             true
         }
+        "inline-size" | "block-size" | "min-inline-size" | "min-block-size" | "max-inline-size"
+        | "max-block-size" => {
+            let property = match name {
+                "inline-size" => "width",
+                "block-size" => "height",
+                "min-inline-size" => "min-width",
+                "min-block-size" => "min-height",
+                "max-inline-size" => "max-width",
+                _ => "max-height",
+            };
+            apply(decl, property, value, _current)
+        }
+        "margin-inline" | "margin-block" => {
+            let values = parse_lengths(value).unwrap_or_default();
+            if let Some(first) = values.first() {
+                let second = values.get(1).unwrap_or(first);
+                let edges = decl.margin.get_or_insert_with(Edges::default);
+                if name == "margin-inline" {
+                    edges.left = first.clone();
+                    edges.right = second.clone();
+                } else {
+                    edges.top = first.clone();
+                    edges.bottom = second.clone();
+                }
+            }
+            true
+        }
+        "padding-inline" | "padding-block" => {
+            let values = parse_lengths(value).unwrap_or_default();
+            if let Some(first) = values.first() {
+                let second = values.get(1).unwrap_or(first);
+                let edges = decl.padding.get_or_insert_with(Edges::default);
+                if name == "padding-inline" {
+                    edges.left = first.clone();
+                    edges.right = second.clone();
+                } else {
+                    edges.top = first.clone();
+                    edges.bottom = second.clone();
+                }
+            }
+            true
+        }
+        "margin-inline-start"
+        | "margin-inline-end"
+        | "margin-block-start"
+        | "margin-block-end"
+        | "padding-inline-start"
+        | "padding-inline-end"
+        | "padding-block-start"
+        | "padding-block-end" => {
+            if let Ok(length) = Length::parse(value) {
+                let is_margin = name.starts_with("margin");
+                let edges = if is_margin {
+                    decl.margin.get_or_insert_with(Edges::default)
+                } else {
+                    decl.padding.get_or_insert_with(Edges::default)
+                };
+                match name {
+                    n if n.ends_with("inline-start") => edges.left = length,
+                    n if n.ends_with("inline-end") => edges.right = length,
+                    n if n.ends_with("block-start") => edges.top = length,
+                    _ => edges.bottom = length,
+                }
+            }
+            true
+        }
+        "inset-inline" | "inset-block" => {
+            let values = parse_lengths(value).unwrap_or_default();
+            if let Some(first) = values.first() {
+                let second = values.get(1).unwrap_or(first);
+                if name == "inset-inline" {
+                    decl.left = Some(first.clone());
+                    decl.right = Some(second.clone());
+                } else {
+                    decl.top = Some(first.clone());
+                    decl.bottom = Some(second.clone());
+                }
+            }
+            true
+        }
+        "inset-inline-start" | "inset-inline-end" | "inset-block-start" | "inset-block-end" => {
+            if let Ok(length) = Length::parse(value) {
+                match name {
+                    n if n.ends_with("inline-start") => decl.left = Some(length),
+                    n if n.ends_with("inline-end") => decl.right = Some(length),
+                    n if n.ends_with("block-start") => decl.top = Some(length),
+                    _ => decl.bottom = Some(length),
+                }
+            }
+            true
+        }
         _ => false,
     }
 }
