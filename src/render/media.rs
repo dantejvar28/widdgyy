@@ -17,6 +17,7 @@ use anyhow::{Context, Result};
 use image::AnimationDecoder;
 use vello::peniko::{Blob, ImageAlphaType, ImageData, ImageFormat};
 
+use crate::media::VideoFrameData;
 use crate::scene::{MediaContent, MediaKind};
 
 const IMAGE_CACHE_LIMIT: usize = 64;
@@ -59,6 +60,12 @@ impl GifAsset {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MediaChanges {
+    pub overlay: bool,
+    pub video: bool,
+}
+
 #[derive(Default)]
 pub struct MediaStore {
     base_dir: PathBuf,
@@ -99,7 +106,9 @@ impl MediaStore {
         match media.kind {
             MediaKind::Image => self.image_for(&media.path),
             MediaKind::Gif => self.gif_image(&media.path),
-            MediaKind::Video => self.video_frame(media),
+            MediaKind::Video => self
+                .video_data(media)
+                .map(|frame| Arc::new(nv12_to_rgba(&frame))),
         }
     }
 
@@ -143,7 +152,7 @@ impl MediaStore {
     }
 
     #[cfg(feature = "video")]
-    fn video_frame(&mut self, media: &MediaContent) -> Option<Arc<ImageData>> {
+    pub fn video_data(&mut self, media: &MediaContent) -> Option<Arc<VideoFrameData>> {
         let key = media.path.clone();
         if !self.videos.contains_key(&key) {
             match crate::media::video::VideoAsset::new(&media.path, media.autoplay, media.looping) {
@@ -161,22 +170,22 @@ impl MediaStore {
     }
 
     #[cfg(not(feature = "video"))]
-    fn video_frame(&mut self, _media: &MediaContent) -> Option<Arc<ImageData>> {
+    pub fn video_data(&mut self, _media: &MediaContent) -> Option<Arc<VideoFrameData>> {
         None
     }
 
-    /// Advance animated assets. Returns `true` when a frame changed.
-    pub fn update(&mut self, delta: Duration) -> bool {
-        let mut changed = false;
+    /// Advance animated assets. Returns which kind of content changed.
+    pub fn update(&mut self, delta: Duration) -> MediaChanges {
+        let mut changes = MediaChanges::default();
         for gif in self.gifs.values_mut() {
-            changed |= gif.advance(delta);
+            changes.overlay |= gif.advance(delta);
         }
         #[cfg(feature = "video")]
         for video in self.videos.values_mut() {
-            changed |= video.pump();
+            changes.video |= video.pump();
         }
-        self.dirty = changed;
-        changed
+        self.dirty = changes.overlay || changes.video;
+        changes
     }
 
     pub fn has_video(&self) -> bool {
@@ -256,4 +265,37 @@ fn load_gif(path: &Path) -> Result<GifAsset> {
         elapsed: Duration::ZERO,
         current: 0,
     })
+}
+
+fn nv12_to_rgba(frame: &VideoFrameData) -> ImageData {
+    let width = frame.width as usize;
+    let height = frame.height as usize;
+    let mut rgba = vec![255u8; width * height * 4];
+    let y_plane = &frame.buffer[frame.y_offset..];
+    let uv_plane = &frame.buffer[frame.uv_offset..];
+    let y_stride = frame.y_stride as usize;
+    let uv_stride = frame.uv_stride as usize;
+    for y in 0..height {
+        let y_row = &y_plane[y * y_stride..];
+        let uv_row = &uv_plane[(y / 2) * uv_stride..];
+        for x in 0..width {
+            let yv = (y_row[x] as f32 - 16.0) * 1.164;
+            let u = uv_row[(x / 2) * 2] as f32 - 128.0;
+            let v = uv_row[(x / 2) * 2 + 1] as f32 - 128.0;
+            let r = yv + 1.793 * v;
+            let g = yv - 0.213 * u - 0.533 * v;
+            let b = yv + 2.112 * u;
+            let offset = (y * width + x) * 4;
+            rgba[offset] = r.clamp(0.0, 255.0) as u8;
+            rgba[offset + 1] = g.clamp(0.0, 255.0) as u8;
+            rgba[offset + 2] = b.clamp(0.0, 255.0) as u8;
+        }
+    }
+    ImageData {
+        data: Blob::from(rgba),
+        format: ImageFormat::Rgba8,
+        alpha_type: ImageAlphaType::Alpha,
+        width: frame.width,
+        height: frame.height,
+    }
 }

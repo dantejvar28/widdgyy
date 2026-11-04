@@ -44,8 +44,29 @@ pub fn paint_media(
     if image_width <= 0.0 || image_height <= 0.0 {
         return;
     }
+    let Some((x, y, draw_width, draw_height)) = media_draw_rect(node) else {
+        return;
+    };
+    let scale_x = draw_width / image_width;
+    let scale_y = draw_height / image_height;
+    let brush = ImageBrushRef {
+        image: &image,
+        sampler: ImageSampler::default().with_quality(ImageQuality::Medium),
+    };
+    let tile = *transform
+        * Affine::translate((x as f64, y as f64))
+        * Affine::scale_non_uniform(scale_x as f64, scale_y as f64);
+    canvas.draw_image(brush, tile);
+}
+
+/// Rectangle where a media node should be drawn, relative to the node's
+/// absolute position. Used by both the Vello painter and the fast compositor.
+pub fn media_draw_rect(node: &Node) -> Option<(f32, f32, f32, f32)> {
     let draw_width = node.layout.draw_width.max(1.0);
     let draw_height = node.layout.draw_height.max(1.0);
+    if node.layout.content_width <= 0.0 || node.layout.content_height <= 0.0 {
+        return None;
+    }
     let free_x = (node.layout.content_width - draw_width).max(0.0);
     let free_y = (node.layout.content_height - draw_height).max(0.0);
     let position = &node.style.effects.object_position;
@@ -68,14 +89,5 @@ pub fn paint_media(
             .y
             .resolve(&context, crate::css::Axis::Vertical)
             .clamp(0.0, free_y);
-    let scale_x = draw_width / image_width;
-    let scale_y = draw_height / image_height;
-    let brush = ImageBrushRef {
-        image: &image,
-        sampler: ImageSampler::default().with_quality(ImageQuality::Medium),
-    };
-    let tile = *transform
-        * Affine::translate((x as f64, y as f64))
-        * Affine::scale_non_uniform(scale_x as f64, scale_y as f64);
-    canvas.draw_image(brush, tile);
+    Some((x, y, draw_width, draw_height))
 }

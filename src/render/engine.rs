@@ -16,6 +16,8 @@ use wgpu::{
     Texture, TextureFormat, TextureUsages, TextureView,
 };
 
+use super::compositor::{Compositor, VideoFrame};
+
 pub struct GpuRenderer {
     pub device: Device,
     pub queue: Queue,
@@ -23,6 +25,7 @@ pub struct GpuRenderer {
     pub config: SurfaceConfiguration,
     pub format: TextureFormat,
     vello: VelloRenderer,
+    compositor: Compositor,
     target: Texture,
     target_view: TextureView,
     blitter: TextureBlitter,
@@ -82,12 +85,17 @@ impl GpuRenderer {
                 .unwrap_or(CompositeAlphaMode::Auto)
         };
 
+        let present_mode = if capabilities.present_modes.contains(&PresentMode::Mailbox) {
+            PresentMode::Mailbox
+        } else {
+            PresentMode::Fifo
+        };
         let config = SurfaceConfiguration {
             usage: TextureUsages::RENDER_ATTACHMENT,
             format,
             width,
             height,
-            present_mode: PresentMode::Fifo,
+            present_mode,
             desired_maximum_frame_latency: 2,
             alpha_mode,
             view_formats: vec![],
@@ -99,6 +107,7 @@ impl GpuRenderer {
             .context("creating Vello renderer")?;
         let (target, target_view) = create_target(&device, width, height);
         let blitter = TextureBlitter::new(&device, format);
+        let compositor = Compositor::new(&device, format, width, height);
 
         Ok(Self {
             device,
@@ -107,6 +116,7 @@ impl GpuRenderer {
             config,
             format,
             vello,
+            compositor,
             target,
             target_view,
             blitter,
@@ -129,10 +139,50 @@ impl GpuRenderer {
         let (target, view) = create_target(&self.device, width, height);
         self.target = target;
         self.target_view = view;
+        self.compositor.resize(&self.device, width, height);
     }
 
     pub fn size(&self) -> (u32, u32) {
         (self.width, self.height)
+    }
+
+    /// Rasterize the static overlay with Vello into the compositor texture.
+    pub fn render_overlay(&mut self, scene: &Scene) -> Result<()> {
+        let params = RenderParams {
+            base_color: Color::new([0.0, 0.0, 0.0, 0.0]),
+            width: self.width,
+            height: self.height,
+            antialiasing_method: AaConfig::Area,
+        };
+        self.vello
+            .render_to_texture(
+                &self.device,
+                &self.queue,
+                scene,
+                self.compositor.overlay_view(),
+                &params,
+            )
+            .context("Vello overlay rasterization")
+    }
+
+    /// Composite the newest video frame and the cached overlay to the surface.
+    pub fn render_composite(&mut self, video: Option<&VideoFrame>) -> Result<()> {
+        let Some(frame) = self.acquire_surface() else {
+            return Ok(());
+        };
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("widdgyy composite"),
+            });
+        self.compositor
+            .encode(&self.device, &self.queue, &mut encoder, &view, video);
+        self.queue.submit(Some(encoder.finish()));
+        self.queue.present(frame);
+        Ok(())
     }
 
     pub fn render(&mut self, scene: &Scene) -> Result<()> {
@@ -146,24 +196,8 @@ impl GpuRenderer {
             .render_to_texture(&self.device, &self.queue, scene, &self.target_view, &params)
             .context("Vello rasterization")?;
 
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface.configure(&self.device, &self.config);
-                match self.surface.get_current_texture() {
-                    wgpu::CurrentSurfaceTexture::Success(frame)
-                    | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
-                    other => {
-                        log::debug!("surface still unavailable after reconfigure: {other:?}");
-                        return Ok(());
-                    }
-                }
-            }
-            other => {
-                log::debug!("surface unavailable: {other:?}");
-                return Ok(());
-            }
+        let Some(frame) = self.acquire_surface() else {
+            return Ok(());
         };
 
         let view = frame
@@ -179,6 +213,28 @@ impl GpuRenderer {
         self.queue.submit(Some(encoder.finish()));
         self.queue.present(frame);
         Ok(())
+    }
+
+    fn acquire_surface(&mut self) -> Option<wgpu::SurfaceTexture> {
+        match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => Some(frame),
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface.configure(&self.device, &self.config);
+                match self.surface.get_current_texture() {
+                    wgpu::CurrentSurfaceTexture::Success(frame)
+                    | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => Some(frame),
+                    other => {
+                        log::debug!("surface still unavailable after reconfigure: {other:?}");
+                        None
+                    }
+                }
+            }
+            other => {
+                log::debug!("surface unavailable: {other:?}");
+                None
+            }
+        }
     }
 
     pub fn target(&self) -> &Texture {

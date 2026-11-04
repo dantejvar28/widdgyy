@@ -148,11 +148,20 @@ struct WaylandState {
 
 impl WaylandState {
     fn render(&mut self) {
+        let plan = self.runtime.prepare_frame();
         let Some(gpu) = &mut self.gpu else {
             return;
         };
-        let scene = self.runtime.paint();
-        if let Err(error) = gpu.render(scene) {
+        if plan.fast {
+            if plan.overlay_updated
+                && let Err(error) = gpu.render_overlay(self.runtime.overlay_scene())
+            {
+                log::error!("overlay render failed: {error:#}");
+            }
+            if let Err(error) = gpu.render_composite(plan.video.as_ref()) {
+                log::error!("video composite failed: {error:#}");
+            }
+        } else if let Err(error) = gpu.render(self.runtime.overlay_scene()) {
             log::error!("render failed: {error:#}");
         }
         self.last_frame = Instant::now();

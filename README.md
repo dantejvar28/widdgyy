@@ -14,7 +14,7 @@ Widdgyy is a native Rust application. There is no Python runtime and no GTK depe
 | GPU rendering | `vello` + `wgpu` | Vector rendering on Vulkan/GL, GPU-composited transparency |
 | Text | `cosmic-text` + Vello glyph runs | Shaping, fallback fonts, wrapping and cacheable glyph runs without Pango |
 | Images / GIF | `image` | Decoded once, bounded cache, shared through `Arc` |
-| Video | GStreamer `playbin` + `appsink` | Frames are copied into Vello images; no GTK widget or overlay |
+| Video | GStreamer `playbin` + `appsink` (NV12) | Y/UV planes are uploaded to wgpu and converted by a shader; no GTK widget, overlay or CPU RGBA conversion |
 | Styling | Built-in CSS engine | Typed style modules, cascade, variables, shorthands, media queries |
 
 The old Python implementation was removed. The JSON schema and the CSS class model are preserved, so existing `config.jsonc` / `styles.css` files keep working.
@@ -177,12 +177,15 @@ Not implemented yet (tracked explicitly rather than silently ignored):
 The render loop is event-driven:
 
 - The Wayland event loop waits with a 16 ms timeout only when a GIF/video/API sticker is active; otherwise it wakes every 200 ms for the clock.
+- Background video uses a fast compositor: the newest NV12 frame is uploaded to two GPU planes and converted to RGB in a shader, while the static Vello overlay is cached and only re-rasterized when text/API content changes. Video playback no longer re-runs Vello over the whole 1080p scene.
 - Text is shaped once per content/style pair and cached (bounded to 512 entries). Painting reuses the shaped glyph runs.
 - Styles are resolved and layout runs only on load, reload and resize, not per frame.
 - Images are decoded once and shared with `Arc`; the image cache is bounded to 64 entries and pruned on reload.
 - GIFs are bounded to 240 frames / 64 M pixels. Video keeps a single latest frame.
 - Dropping the old scene on hot reload drops its media cache entries and GStreamer pipelines (`Drop` sets the pipeline to `State::Null`).
 - There are no global tick callbacks or dangling GLib timeouts.
+
+Measured with the real 1080p30 video config on the development machine (GTX 1650): ~16 % of one CPU core and ~475 MB RSS at steady state, versus ~66 %/~515 MB before the fast compositor. Idle text/clock remains ~0.6 % of one core and ~169 MB.
 
 ## Project layout
 

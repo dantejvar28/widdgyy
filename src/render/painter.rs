@@ -31,14 +31,39 @@ impl<'a> Painter<'a> {
     }
 
     pub fn paint(&mut self, sticker_scene: &StickerScene, canvas: &mut Scene) {
+        self.paint_filtered(sticker_scene, canvas, None);
+    }
+
+    /// Paint the scene, optionally skipping one node (used by the fast video
+    /// compositor to render only the static overlay).
+    pub fn paint_filtered(
+        &mut self,
+        sticker_scene: &StickerScene,
+        canvas: &mut Scene,
+        skip_uid: Option<u64>,
+    ) {
         let mut indices: Vec<usize> = (0..sticker_scene.roots.len()).collect();
         indices.sort_by_key(|index| sticker_scene.roots[*index].z_index);
         for index in indices {
-            self.paint_node(&sticker_scene.roots[index], Affine::IDENTITY, canvas);
+            self.paint_node(
+                &sticker_scene.roots[index],
+                Affine::IDENTITY,
+                skip_uid,
+                canvas,
+            );
         }
     }
 
-    fn paint_node(&mut self, node: &Node, parent_visual: Affine, canvas: &mut Scene) {
+    fn paint_node(
+        &mut self,
+        node: &Node,
+        parent_visual: Affine,
+        skip_uid: Option<u64>,
+        canvas: &mut Scene,
+    ) {
+        if skip_uid == Some(node.uid) {
+            return;
+        }
         if !node.visible || node.style.display == crate::css::Display::None {
             return;
         }
@@ -79,7 +104,7 @@ impl<'a> Painter<'a> {
                 let mut indices: Vec<usize> = (0..node.children.len()).collect();
                 indices.sort_by_key(|index| node.children[*index].z_index);
                 for index in indices {
-                    self.paint_node(&node.children[index], children_visual, canvas);
+                    self.paint_node(&node.children[index], children_visual, skip_uid, canvas);
                 }
             }
         }

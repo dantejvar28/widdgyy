@@ -3,20 +3,21 @@
 
 //! GStreamer video backend.
 //!
-//! A `playbin` renders into an `appsink`; each scene tick pulls the newest RGBA
-//! frame and publishes it as a Vello image. There is no GTK widget, no overlay
-//! and no separate GLib loop: GStreamer's streaming threads fill the sink and
-//! the main loop only copies the latest frame when it needs one.
+//! A `playbin` renders into an `appsink`; each scene tick pulls the newest
+//! NV12 frame. NV12 is uploaded to two GPU planes and converted by the fast
+//! compositor shader, avoiding a CPU RGBA conversion for every frame. There is
+//! no GTK widget, no overlay and no separate GLib loop.
 
 use std::path::Path;
 use std::sync::Arc;
+
+use crate::media::VideoFrameData;
 
 use anyhow::{Context, Result};
 use gst::prelude::*;
 use gstreamer as gst;
 use gstreamer_app as gst_app;
 use gstreamer_video as gst_video;
-use vello::peniko::{Blob, ImageAlphaType, ImageData, ImageFormat};
 
 pub struct VideoAsset {
     pipeline: gst::Pipeline,
@@ -24,7 +25,7 @@ pub struct VideoAsset {
     pub width: u32,
     pub height: u32,
     looping: bool,
-    frame: Option<Arc<ImageData>>,
+    frame: Option<Arc<VideoFrameData>>,
     revision: u64,
     playing: bool,
 }
@@ -40,10 +41,11 @@ impl VideoAsset {
             .property("uri", uri)
             .build()
             .context("creating playbin")?;
-        // Force a single packed RGBA format. Without explicit caps playbin may
-        // negotiate NV12/YUV, which cannot be copied as `width * 4` rows.
+        // NV12 system memory lets us skip the expensive RGBA color conversion
+        // in GStreamer; the compositor shader converts YUV to RGB on the GPU.
         let caps = gst::Caps::builder("video/x-raw")
-            .field("format", "RGBA")
+            .features(["memory:SystemMemory"])
+            .field("format", "NV12")
             .build();
         let sink = gst::ElementFactory::make("appsink")
             .property("sync", true)
@@ -92,7 +94,7 @@ impl VideoAsset {
         self.playing = false;
     }
 
-    pub fn frame(&self) -> Option<Arc<ImageData>> {
+    pub fn frame(&self) -> Option<Arc<VideoFrameData>> {
         self.frame.clone()
     }
 
@@ -108,11 +110,9 @@ impl VideoAsset {
             let Some(sample) = self.sink.try_pull_sample(gst::ClockTime::ZERO) else {
                 break;
             };
-            if let Some(frame) = sample_to_image(&sample) {
-                if let Some((width, height)) = frame_dimensions(&frame) {
-                    self.width = width;
-                    self.height = height;
-                }
+            if let Some(frame) = sample_to_frame(&sample) {
+                self.width = frame.width;
+                self.height = frame.height;
                 self.frame = Some(Arc::new(frame));
                 self.revision = self.revision.wrapping_add(1);
                 changed = true;
@@ -151,36 +151,34 @@ impl Drop for VideoAsset {
     }
 }
 
-fn frame_dimensions(image: &ImageData) -> Option<(u32, u32)> {
-    (image.width > 0 && image.height > 0).then_some((image.width, image.height))
-}
-
-fn sample_to_image(sample: &gst::Sample) -> Option<ImageData> {
+fn sample_to_frame(sample: &gst::Sample) -> Option<VideoFrameData> {
     let caps = sample.caps()?;
     let info = gst_video::VideoInfo::from_caps(caps).ok()?;
-    if info.format() != gst_video::VideoFormat::Rgba {
+    if info.format() != gst_video::VideoFormat::Nv12 {
         return None;
     }
     let buffer = sample.buffer()?;
     let map = buffer.map_readable().ok()?;
     let width = info.width();
     let height = info.height();
-    let stride = info.stride().first().copied().unwrap_or(0).max(0) as usize;
+    let y_offset = *info.offset().first()?;
+    let uv_offset = *info.offset().get(1)?;
+    let y_stride = info.stride().first().copied()?.max(0) as usize;
+    let uv_stride = info.stride().get(1).copied()?.max(0) as usize;
+    let uv_height = height.div_ceil(2) as usize;
     let source = map.as_slice();
-    let row_bytes = width as usize * 4;
-    let mut rgba = Vec::with_capacity(row_bytes * height as usize);
-    for row in 0..height as usize {
-        let start = row * stride;
-        if start + row_bytes > source.len() {
-            return None;
-        }
-        rgba.extend_from_slice(&source[start..start + row_bytes]);
+    if y_offset + y_stride * height as usize > source.len()
+        || uv_offset + uv_stride * uv_height > source.len()
+    {
+        return None;
     }
-    Some(ImageData {
-        data: Blob::from(rgba),
-        format: ImageFormat::Rgba8,
-        alpha_type: ImageAlphaType::Alpha,
+    Some(VideoFrameData {
+        buffer: Arc::from(source),
         width,
         height,
+        y_offset,
+        y_stride: y_stride as u32,
+        uv_offset,
+        uv_stride: uv_stride as u32,
     })
 }

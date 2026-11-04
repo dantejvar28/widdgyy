@@ -16,13 +16,16 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use vello::Scene as VelloScene;
+use vello::peniko::Mix;
 
 use crate::api::ApiManager;
 use crate::config::ConfigLoader;
-use crate::css::{Stylesheet, Viewport};
+use crate::css::properties::ClipPath;
+use crate::css::{Axis, Overflow, Stylesheet, Viewport, Visibility};
 use crate::layout::LayoutEngine;
-use crate::render::{MediaStore, Painter};
-use crate::scene::{MediaKind, NodeKind, Scene};
+use crate::render::media_painter::media_draw_rect;
+use crate::render::{MediaStore, Painter, VideoFrame};
+use crate::scene::{MediaKind, Node, NodeKind, Scene};
 use crate::text::TextEngine;
 use crate::user_config_dir;
 
@@ -43,7 +46,16 @@ pub struct Runtime {
     loaded_fonts: HashSet<String>,
     config_mtime: Option<std::time::SystemTime>,
     css_mtime: Option<std::time::SystemTime>,
+    overlay_dirty: bool,
+    fast_mode: bool,
     dirty: bool,
+}
+
+/// What the platform should draw for the current frame.
+pub struct FramePlan {
+    pub fast: bool,
+    pub overlay_updated: bool,
+    pub video: Option<VideoFrame>,
 }
 
 impl Runtime {
@@ -79,6 +91,8 @@ impl Runtime {
             loaded_fonts: HashSet::new(),
             config_mtime,
             css_mtime,
+            overlay_dirty: true,
+            fast_mode: false,
             dirty: true,
         };
         runtime.media.set_base_dir(runtime.config.config_dir());
@@ -215,6 +229,8 @@ impl Runtime {
         self.scene.layout(&mut LayoutEngine::new(&mut self.text));
         let paths = media_paths(&self.scene);
         self.media.retain_paths(&paths);
+        self.overlay_dirty = true;
+        self.fast_mode = false;
         self.dirty = true;
     }
 
@@ -230,21 +246,117 @@ impl Runtime {
         content_changed |= self.api.tick(&mut self.scene, now);
         if content_changed {
             self.scene.layout(&mut LayoutEngine::new(&mut self.text));
+            self.overlay_dirty = true;
             self.dirty = true;
         }
-        if self.media.update(delta) {
+        let media_changes = self.media.update(delta);
+        if media_changes.overlay {
+            self.overlay_dirty = true;
+            self.dirty = true;
+        }
+        if media_changes.video {
             self.dirty = true;
         }
         self.dirty
     }
 
-    pub fn paint(&mut self) -> &VelloScene {
+    /// Prepare the next frame. Fast path videos are drawn as a single wgpu
+    /// texture; the Vello overlay is only re-rendered when its content changes.
+    pub fn prepare_frame(&mut self) -> FramePlan {
+        let candidate = self.background_video_node().and_then(|node| {
+            let media = node.media_content()?.clone();
+            let (x, y, width, height) = media_draw_rect(node)?;
+            Some((
+                node.uid,
+                media,
+                node.absolute_x + x,
+                node.absolute_y + y,
+                width,
+                height,
+            ))
+        });
+
+        if let Some((uid, media, x, y, width, height)) = candidate
+            && let Some(image) = self.media.video_data(&media)
+        {
+            if !self.fast_mode {
+                self.fast_mode = true;
+                self.overlay_dirty = true;
+            }
+            let overlay_updated = self.overlay_dirty;
+            if overlay_updated {
+                self.canvas.reset();
+                let mut painter = Painter::new(&mut self.text, &mut self.media);
+                painter.paint_filtered(&self.scene, &mut self.canvas, Some(uid));
+                self.overlay_dirty = false;
+            }
+            self.dirty = false;
+            self.scene.clear_dirty();
+            return FramePlan {
+                fast: true,
+                overlay_updated,
+                video: Some(VideoFrame {
+                    data: image,
+                    x,
+                    y,
+                    width: width.max(1.0),
+                    height: height.max(1.0),
+                }),
+            };
+        }
+
+        self.fast_mode = false;
+        self.prepare_full()
+    }
+
+    fn prepare_full(&mut self) -> FramePlan {
         self.canvas.reset();
         let mut painter = Painter::new(&mut self.text, &mut self.media);
         painter.paint(&self.scene, &mut self.canvas);
+        self.overlay_dirty = false;
         self.dirty = false;
         self.scene.clear_dirty();
+        FramePlan {
+            fast: false,
+            overlay_updated: true,
+            video: None,
+        }
+    }
+
+    pub fn overlay_scene(&self) -> &VelloScene {
         &self.canvas
+    }
+
+    fn background_video_node(&self) -> Option<&Node> {
+        let mut video = None;
+        for root in &self.scene.roots {
+            if let NodeKind::Media(media) = &root.kind
+                && media.kind == MediaKind::Video
+            {
+                if video.is_some() {
+                    return None;
+                }
+                video = Some(root);
+            }
+        }
+        let video = video?;
+        if !fast_style_ok(video) {
+            return None;
+        }
+        for root in &self.scene.roots {
+            if root.uid != video.uid && root.z_index <= video.z_index {
+                return None;
+            }
+        }
+        if self
+            .scene
+            .roots
+            .iter()
+            .any(|root| has_video(root, Some(video.uid)))
+        {
+            return None;
+        }
+        Some(video)
     }
 
     pub fn needs_animation(&self) -> bool {
@@ -262,6 +374,7 @@ impl Runtime {
     }
 
     pub fn invalidate(&mut self) {
+        self.overlay_dirty = true;
         self.dirty = true;
     }
 
@@ -273,6 +386,59 @@ impl Runtime {
     pub fn keyframes(&self, name: &str) -> Option<crate::css::properties::transition::Keyframes> {
         self.stylesheet.keyframes.get(name).cloned()
     }
+}
+
+fn has_video(node: &Node, skip_uid: Option<u64>) -> bool {
+    if skip_uid == Some(node.uid) {
+        return false;
+    }
+    if let NodeKind::Media(media) = &node.kind
+        && media.kind == MediaKind::Video
+    {
+        return true;
+    }
+    node.children.iter().any(|child| has_video(child, skip_uid))
+}
+
+fn fast_style_ok(node: &Node) -> bool {
+    let style = &node.style;
+    if !node.visible
+        || style.display == crate::css::Display::None
+        || style.visibility != Visibility::Visible
+    {
+        return false;
+    }
+    if style.effects.opacity < 0.999
+        || !style.effects.transform.is_empty()
+        || style.effects.clip_path != ClipPath::None
+        || !style.effects.box_shadows.is_empty()
+        || !style.effects.filters.is_empty()
+        || !style.effects.backdrop_filters.is_empty()
+        || style.effects.mix_blend_mode != Mix::Normal
+    {
+        return false;
+    }
+    if !style.background.images.is_empty() || style.background.color.components[3] > 0.0 {
+        return false;
+    }
+    let context = style.resolve_context(Viewport::default(), node.layout.width, node.layout.height);
+    let border = style.border.widths.resolve(&context, Axis::Horizontal);
+    if border.top > 0.0 || border.right > 0.0 || border.bottom > 0.0 || border.left > 0.0 {
+        return false;
+    }
+    let radius = style.border.radius.resolve(&context, Axis::Horizontal);
+    if radius.top > 0.0 || radius.right > 0.0 || radius.bottom > 0.0 || radius.left > 0.0 {
+        return false;
+    }
+    if style
+        .border
+        .outline_width
+        .resolve(&context, Axis::Horizontal)
+        > 0.0
+    {
+        return false;
+    }
+    style.overflow_x == Overflow::Visible && style.overflow_y == Overflow::Visible
 }
 
 fn load_stylesheet(path: &Path) -> Stylesheet {

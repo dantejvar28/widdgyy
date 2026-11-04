@@ -21,6 +21,7 @@ styles.css ───► Stylesheet ──► Cascade ──► ComputedStyle (ty
 - Styles are parsed once. The cascade runs on load, hot reload and resize only.
 - Layout runs on load, hot reload, resize and when text content changes (clock/API).
 - Painting runs only when the scene is dirty: a clock second, a GIF/video frame, an API result, a resize or a reload.
+- The fast video path draws a background video as a single textured quad and composites a cached Vello overlay. Vello only re-rasterizes the overlay when clocks/API/text/resize change, not per video frame.
 - The Wayland event loop waits 200 ms when idle and 16 ms while animated media/API work is active.
 
 ## Style modules
@@ -63,9 +64,11 @@ Painters read typed `ComputedStyle` fields. They never compare property-name str
 
 ### Video
 
-- `VideoAsset` owns a GStreamer `playbin` and an `appsink`.
-- `pump()` copies at most 4 newest samples per tick; `max-buffers=2` and `drop=true` prevent queue growth.
-- Only one `Arc<ImageData>` frame is retained. The previous frame is released immediately after replacement.
+- `VideoAsset` owns a GStreamer `playbin` and an `appsink` negotiated to NV12 system memory.
+- `pump()` copies at most 4 newest samples per tick; `max-buffers=1` and `drop=true` prevent queue growth.
+- The full NV12 buffer is copied once per frame (`Arc<[u8]>`). Y and UV planes are uploaded separately, then converted to RGB by the compositor shader.
+- The fast path keeps only the newest frame, the Y/UV GPU textures and a cached Vello overlay texture.
+- If the video has a border/radius/transform/opacity/filter, the renderer falls back to the full Vello path and converts NV12 to RGBA for that frame.
 - `Drop for VideoAsset` sets the pipeline to `State::Null`, releasing decoder threads, buffers and GStreamer resources.
 - `MediaStore` drops the `VideoAsset` when the path is no longer referenced after reload.
 
@@ -90,9 +93,9 @@ Release build, 1920x1080, real config from `~/.config/widdgyy`:
 | Scenario | CPU (one core) | RSS after warm-up |
 | --- | --- | --- |
 | Text/clock only (`--config` test fixture) | ~0.2% | ~165 MB |
-| 1080p looping video + clock + API stickers | ~57% | ~500 MB, stable over 60 s |
+| 1080p looping video + clock + API stickers | ~16% | ~475 MB, stable over 60 s |
 
-The video scenario is dominated by software H.264 decode + RGBA conversion + Vello re-upload. `appsink` uses `sync=true`, `max-buffers=1` and `drop=true` so the decoder does not run ahead of the display. RSS was sampled every 10 s for 60 s with no upward trend.
+The video path uses NVDEC/NV12, avoids the per-frame CPU RGBA conversion, and composites the static Vello overlay only when it changes. `appsink` uses `sync=true`, `max-buffers=1` and `drop=true` so the decoder does not run ahead of the display. RSS was sampled every 10 s for 60 s with no upward trend.
 
 ## Removed leak sources from the Python version
 
