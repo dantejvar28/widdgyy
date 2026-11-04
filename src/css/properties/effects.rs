@@ -290,6 +290,7 @@ fn parse_clip_path(value: &str) -> Option<ClipPath> {
             }
             ClipPath::Polygon(points)
         }
+        "path" => ClipPath::Path(inner.trim_matches('"').trim_matches('\'').to_string()),
         "url" => ClipPath::Url(inner.trim_matches('"').trim_matches('\'').to_string()),
         _ => return None,
     })

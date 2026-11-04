@@ -163,7 +163,7 @@ Implemented in the renderer:
 - Background: color, images (`url()`), linear/radial/conic gradients, position, size, repeat, clip/origin, blend mode.
 - Border/outline: width, style (solid/dashed/dotted), color, radius, outline.
 - Text: family, size, weight, style, line-height, letter/word spacing, alignment, decoration, transform, white-space, wrapping, overflow/ellipsis, shadows. `font-stretch`, `font-variant-caps` and `vertical-align` are parsed but not applied by the shaper yet.
-- Effects: opacity, box-shadow (including inset), text-shadow, color filters, individual translate/rotate/scale, transform/transform-origin, clip-path shapes, isolation, object-fit/object-position.
+- Effects: opacity, box-shadow (including inset), text-shadow, color filters, individual translate/rotate/scale, transform/transform-origin, clip-path shapes and `path()`, isolation, object-fit/object-position.
 - Layout: flex (direction, justify, align-*, gap, order, grow/shrink/basis) and CSS grid templates/auto-flow. `flex-wrap` and explicit `grid-column`/`grid-row` placement are parsed; layout currently uses a single flex line and auto-placement.
 - Animations: `@keyframes` applied at runtime for `transform`, `opacity`, `color` and `background-color`; timing functions, delay, direction, iteration and fill modes. Transitions and layout-affecting animations are still pending.
 - Media queries: width/height, orientation, `prefers-reduced-motion`, `prefers-color-scheme` parsing.

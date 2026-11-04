@@ -257,6 +257,7 @@ pub enum ClipPath {
     Circle(Length, Length, Length),
     Ellipse(Length, Length, Length, Length),
     Polygon(Vec<(Length, Length)>),
+    Path(String),
     Url(String),
 }
 

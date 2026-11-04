@@ -254,7 +254,7 @@ If a family exists but does not ship the exact weight/style (common for display 
 
 ### Effects
 
-`opacity`, `box-shadow` (outer and inset), `text-shadow`, `mix-blend-mode`, `filter` (color-matrix filters), individual `translate`/`rotate`/`scale`, `transform`, `transform-origin`, `clip-path` (basic shapes), `isolation`, `object-fit`, `object-position`.
+`opacity`, `box-shadow` (outer and inset), `text-shadow`, `mix-blend-mode`, `filter` (color-matrix filters), individual `translate`/`rotate`/`scale`, `transform`, `transform-origin`, `clip-path` (inset/circle/ellipse/polygon/path), `isolation`, `object-fit`, `object-position`.
 
 `blur()`, `drop-shadow()`, `backdrop-filter`, masks and border-image still need the offscreen layer pipeline.
 
