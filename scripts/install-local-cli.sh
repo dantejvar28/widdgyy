@@ -71,7 +71,7 @@ install_aur_package() {
     -czf "${build_dir}/widdgyy-local.tar.gz" .
 
   cat > "${build_dir}/PKGBUILD" <<'PKGEOF'
-pkgname=widdgyy-local
+pkgname=widdgyy
 pkgver=0.0.0
 pkgrel=1
 pkgdesc="GPU-accelerated Wayland layer-shell desktop ricing engine (local build)"
@@ -90,8 +90,8 @@ optdepends=(
   'gst-libav: H.264/H.265 decoding'
 )
 makedepends=('cargo' 'rust')
-provides=('widdgyy')
-conflicts=('widdgyy')
+conflicts=('widdgyy-git' 'widdgyy-local')
+replaces=('widdgyy-git')
 source=('widdgyy-local.tar.gz')
 sha256sums=('SKIP')
 
@@ -112,7 +112,7 @@ package() {
   install -m644 README.md "${pkgdir}/usr/share/widdgyy/README.md"
   install -m644 "docs/Configuration & Styling Guide.md" \
     "${pkgdir}/usr/share/widdgyy/Configuration & Styling Guide.md"
-  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/widdgyy/LICENSE"
 }
 PKGEOF
 
