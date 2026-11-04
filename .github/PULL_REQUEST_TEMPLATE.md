@@ -13,9 +13,11 @@
 
 ## Validation
 
-- [ ] I ran `python -m compileall .`
+- [ ] I ran `cargo fmt --check`
+- [ ] I ran `cargo test`
+- [ ] I ran `cargo clippy --all-targets -- -D warnings`
 - [ ] I tested the change locally
-- [ ] I ran Rust checks for native code (if touched)
+- [ ] I tested with `RUST_LOG=widdgyy=debug` and no new warnings appeared
 
 ## Screenshots / Video
 

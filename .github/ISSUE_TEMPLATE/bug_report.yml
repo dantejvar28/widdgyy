@@ -46,12 +46,35 @@ body:
       required: true
 
   - type: input
-    id: python
+    id: rust
     attributes:
-      label: Python version
-      placeholder: 3.12.x
+      label: Rust / Widdgyy version
+      placeholder: rustc 1.99.1, widdgyy 0.2.0
     validations:
       required: true
+
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU / driver
+      placeholder: AMD Radeon ..., Mesa 25.x / NVIDIA 5xx
+    validations:
+      required: true
+
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Renderer issue area
+      options:
+        - Text / fonts
+        - Layout (flex/grid)
+        - Background / border / shadows
+        - Image / GIF
+        - Video (GStreamer)
+        - API sticker
+        - Hot reload
+        - Wayland layer shell
+        - Other
 
   - type: textarea
     id: logs

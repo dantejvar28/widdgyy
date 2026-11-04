@@ -1,0 +1,35 @@
+{
+  // Widdgyy sample configuration.
+  // Copy to ~/.config/widdgyy/config.jsonc and adjust paths.
+  "stickers": [
+    {
+      "type": "text",
+      "class": "brand",
+      "text": "widdgyy",
+      "anchor": "top-left",
+      "offset_x": 48,
+      "offset_y": 40
+    },
+    {
+      "type": "vbox",
+      "class": "panel",
+      "anchor": "center",
+      "padding": 28,
+      "spacing": 10,
+      "align_items": "center",
+      "children": [
+        {
+          "type": "clock",
+          "class": "clock",
+          "format": "%H:%M",
+          "font_size": 72
+        },
+        {
+          "type": "text",
+          "class": "subtitle",
+          "text": "Rust + Vello + CSS"
+        }
+      ]
+    }
+  ]
+}

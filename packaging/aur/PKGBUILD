@@ -1,23 +1,22 @@
 # Maintainer: Daniel <daniel@example.com>
 
 pkgname=widdgyy-git
-pkgver=r49.gdfa7dff
+pkgver=r52.g24c46eb
 pkgrel=1
-pkgdesc="GTK4 layer-shell desktop widget renderer with text, media and layout stickers"
+pkgdesc="GPU-accelerated Wayland layer-shell desktop ricing engine (Rust + Vello)"
 arch=('x86_64')
 url="https://github.com/dantejvar28/widdgyy"
 license=('GPL-3.0-or-later')
 depends=(
-  'python'
-  'python-gobject'
-  'python-cairo'
-  'python-commentjson'
-  'python-requests'
-  'gtk4'
-  'gtk4-layer-shell'
   'gstreamer'
   'gst-plugins-base'
   'gst-plugins-good'
+  'wayland'
+  'vulkan-icd-loader'
+)
+optdepends=(
+  'gst-plugins-bad: extra video codecs'
+  'gst-libav: H.264/H.265 decoding'
 )
 makedepends=(
   'git'
@@ -35,29 +34,26 @@ pkgver() {
 }
 
 build() {
-  cd "${srcdir}/${pkgname}/native/video"
-  cargo build --release
+  cd "${srcdir}/${pkgname}"
+  # makepkg's CFLAGS/LDFLAGS (notably LTO/as-needed) can break ring's
+  # assembly objects. Rust manages its own flags via the Cargo profile.
+  unset CFLAGS CXXFLAGS LDFLAGS RUSTFLAGS
+  # Keep build artifacts out of the cloned repository / package source tree.
+  export CARGO_TARGET_DIR="${srcdir}/target"
+  cargo build --release --locked
 }
 
 package() {
   cd "${srcdir}/${pkgname}"
 
+  install -Dm755 "${srcdir}/target/release/widdgyy" "${pkgdir}/usr/bin/widdgyy"
+
   install -dm755 "${pkgdir}/usr/share/widdgyy"
-  cp -r core "${pkgdir}/usr/share/widdgyy/"
-  cp -r layouts "${pkgdir}/usr/share/widdgyy/"
-  cp -r media "${pkgdir}/usr/share/widdgyy/"
-  cp -r stickers "${pkgdir}/usr/share/widdgyy/"
-  cp -r utils "${pkgdir}/usr/share/widdgyy/"
   if [[ -d assets ]]; then
     cp -r assets "${pkgdir}/usr/share/widdgyy/"
   fi
-  install -m644 main.py "${pkgdir}/usr/share/widdgyy/main.py"
   install -m644 README.md "${pkgdir}/usr/share/widdgyy/README.md"
+  install -m644 "docs/Configuration & Styling Guide.md" \
+    "${pkgdir}/usr/share/widdgyy/Configuration & Styling Guide.md"
   install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
-
-  install -dm755 "${pkgdir}/usr/share/widdgyy/native/video"
-  install -m644 native/video/target/release/libwiddgyy_video.so \
-    "${pkgdir}/usr/share/widdgyy/native/video/widdgyy_video.so"
-
-  install -Dm755 packaging/aur/widdgyy.sh "${pkgdir}/usr/bin/widdgyy"
 }

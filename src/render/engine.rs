@@ -1,0 +1,206 @@
+// SPDX-FileCopyrightText: 2026 Daniel
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! wgpu + Vello presentation.
+//!
+//! Vello renders to an intermediate `Rgba8Unorm` texture, which is then blitted
+//! to the swapchain. This avoids binding the surface texture directly to the
+//! compute pipeline and works with the layer-shell's transparent surfaces.
+
+use anyhow::{Context, Result};
+use vello::peniko::Color;
+use vello::{AaConfig, RenderParams, Renderer as VelloRenderer, RendererOptions, Scene};
+use wgpu::util::TextureBlitter;
+use wgpu::{
+    CompositeAlphaMode, Device, Instance, PresentMode, Queue, Surface, SurfaceConfiguration,
+    Texture, TextureFormat, TextureUsages, TextureView,
+};
+
+pub struct GpuRenderer {
+    pub device: Device,
+    pub queue: Queue,
+    pub surface: Surface<'static>,
+    pub config: SurfaceConfiguration,
+    pub format: TextureFormat,
+    vello: VelloRenderer,
+    target: Texture,
+    target_view: TextureView,
+    blitter: TextureBlitter,
+    width: u32,
+    height: u32,
+}
+
+impl GpuRenderer {
+    pub fn new(
+        instance: &Instance,
+        surface: Surface<'static>,
+        width: u32,
+        height: u32,
+    ) -> Result<Self> {
+        let width = width.max(1);
+        let height = height.max(1);
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: Some(&surface),
+            force_fallback_adapter: false,
+            ..Default::default()
+        }))
+        .context("no compatible GPU adapter")?;
+
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("widdgyy"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            ..Default::default()
+        }))
+        .context("creating wgpu device")?;
+
+        let capabilities = surface.get_capabilities(&adapter);
+        let format = capabilities
+            .formats
+            .iter()
+            .copied()
+            .find(|format| {
+                matches!(
+                    format,
+                    TextureFormat::Rgba8Unorm | TextureFormat::Bgra8Unorm
+                )
+            })
+            .or_else(|| capabilities.formats.first().copied())
+            .context("surface has no supported format")?;
+
+        let alpha_mode = if capabilities
+            .alpha_modes
+            .contains(&CompositeAlphaMode::PreMultiplied)
+        {
+            CompositeAlphaMode::PreMultiplied
+        } else {
+            capabilities
+                .alpha_modes
+                .first()
+                .copied()
+                .unwrap_or(CompositeAlphaMode::Auto)
+        };
+
+        let config = SurfaceConfiguration {
+            usage: TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width,
+            height,
+            present_mode: PresentMode::Fifo,
+            desired_maximum_frame_latency: 2,
+            alpha_mode,
+            view_formats: vec![],
+            color_space: wgpu::SurfaceColorSpace::Auto,
+        };
+        surface.configure(&device, &config);
+
+        let vello = VelloRenderer::new(&device, RendererOptions::default())
+            .context("creating Vello renderer")?;
+        let (target, target_view) = create_target(&device, width, height);
+        let blitter = TextureBlitter::new(&device, format);
+
+        Ok(Self {
+            device,
+            queue,
+            surface,
+            config,
+            format,
+            vello,
+            target,
+            target_view,
+            blitter,
+            width,
+            height,
+        })
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) {
+        let width = width.max(1);
+        let height = height.max(1);
+        if width == self.width && height == self.height {
+            return;
+        }
+        self.width = width;
+        self.height = height;
+        self.config.width = width;
+        self.config.height = height;
+        self.surface.configure(&self.device, &self.config);
+        let (target, view) = create_target(&self.device, width, height);
+        self.target = target;
+        self.target_view = view;
+    }
+
+    pub fn size(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    pub fn render(&mut self, scene: &Scene) -> Result<()> {
+        let params = RenderParams {
+            base_color: Color::new([0.0, 0.0, 0.0, 0.0]),
+            width: self.width,
+            height: self.height,
+            antialiasing_method: AaConfig::Area,
+        };
+        self.vello
+            .render_to_texture(&self.device, &self.queue, scene, &self.target_view, &params)
+            .context("Vello rasterization")?;
+
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface.configure(&self.device, &self.config);
+                match self.surface.get_current_texture() {
+                    wgpu::CurrentSurfaceTexture::Success(frame)
+                    | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+                    other => {
+                        log::debug!("surface still unavailable after reconfigure: {other:?}");
+                        return Ok(());
+                    }
+                }
+            }
+            other => {
+                log::debug!("surface unavailable: {other:?}");
+                return Ok(());
+            }
+        };
+
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("widdgyy blit"),
+            });
+        self.blitter
+            .copy(&self.device, &mut encoder, &self.target_view, &view);
+        self.queue.submit(Some(encoder.finish()));
+        self.queue.present(frame);
+        Ok(())
+    }
+
+    pub fn target(&self) -> &Texture {
+        &self.target
+    }
+}
+
+fn create_target(device: &Device, width: u32, height: u32) -> (Texture, TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("widdgyy vello target"),
+        size: wgpu::Extent3d {
+            width: width.max(1),
+            height: height.max(1),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: TextureFormat::Rgba8Unorm,
+        usage: TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
+}

@@ -1,6 +1,0 @@
-commentjson
-pycairo
-PyGObject
-requests
-pytest
-ruff

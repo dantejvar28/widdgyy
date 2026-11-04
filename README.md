@@ -1,150 +1,218 @@
 # Widdgyy
 
-Widdgyy is an open-source desktop ricing engine for Linux that turns your wallpaper into a living workspace.
+Widdgyy is an open-source desktop ricing engine for Wayland that turns your wallpaper into a living workspace.
 
-Create clocks, images, text, weather panels, system monitors, and API-powered stickers that are rendered directly on the desktop using GTK. Everything is configured with simple JSON and styled with CSS, making it easy to build highly customized layouts without writing a full desktop extension.
+Create clocks, images, videos, text, weather panels, system monitors and API-powered stickers that are rendered directly on the desktop background layer. Everything is configured with JSON and styled with CSS, so you can build highly customized layouts without writing a desktop extension.
 
-Unlike traditional widget tools, Widdgyy focuses on a modern, hackable workflow:
+## Architecture
 
-- JSON for layout
-- CSS for styling
-- Python for rapid widget development
-- GTK 4 for native Wayland/Linux integration
+Widdgyy is a native Rust application. There is no Python runtime and no GTK dependency.
 
-If you are getting started, read the [Configuration & Styling Guide](docs/Configuration%20%26%20Styling%20Guide.md) first. It explains where to place `config.jsonc` and `styles.css`, how sticker classes map to CSS, and which properties are supported today.
+| Layer | Technology | Why |
+| --- | --- | --- |
+| Window / desktop integration | `smithay-client-toolkit` + `wlr-layer-shell` | Native background layer, anchors, exclusive zones, no decoration |
+| GPU rendering | `vello` + `wgpu` | Vector rendering on Vulkan/GL, GPU-composited transparency |
+| Text | `cosmic-text` + Vello glyph runs | Shaping, fallback fonts, wrapping and cacheable glyph runs without Pango |
+| Images / GIF | `image` | Decoded once, bounded cache, shared through `Arc` |
+| Video | GStreamer `playbin` + `appsink` | Frames are copied into Vello images; no GTK widget or overlay |
+| Styling | Built-in CSS engine | Typed style modules, cascade, variables, shorthands, media queries |
 
-# Why Python? 
+The old Python implementation was removed. The JSON schema and the CSS class model are preserved, so existing `config.jsonc` / `styles.css` files keep working.
 
-Widdgyy was intentionally started in Python to optimize for experimentation and community contribution. The goal is to make creating a new widget feel as easy as writing a small Python class, not compiling an entire desktop application.
+> **Compatibility note:** the previous Python widget extension point was never a public plugin API (types were hard-coded in the loader), so this rewrite does not remove a supported extension mechanism. If a plugin system is added later, it should be designed explicitly (WASM, Lua or a stable Rust trait).
 
-This allows contributors to prototype ideas quickly:
+## Features
 
-Spotify widgets
-weather integrations
-calendar panels
-custom API dashboards
-animated stickers
-productivity overlays
-Performance-first architecture
+- **CSS, not ad-hoc properties:** selectors, specificity, `!important`, inheritance, custom properties (`--accent` / `var()`), `calc()`, media queries, shorthands, gradients, shadows, borders, transforms, clipping, flex and grid.
+- **Static CSS parsed once:** the frame loop never parses colors, lengths or selectors.
+- **Bounded caches:** text shaping and media assets have hard limits; reloading drops the old scene and releases its assets.
+- **Hot reload:** editing `config.jsonc` or `styles.css` rebuilds the scene without restarting.
+- **API stickers:** requests run on worker threads and report through a channel; the render loop never blocks on the network.
+- **Animated media:** GIF and video frames update through the same clock as widgets.
 
-The long-term vision is a hybrid architecture: keep the widget ecosystem accessible in Python while moving performance-critical components (such as video rendering, animation, and low-level rendering pipelines) to Rust.
+## Requirements
 
-This approach aims to provide the best of both worlds:
+- A Wayland compositor with `wlr-layer-shell` (Hyprland, Sway, river, Wayfire, etc.).
+- Rust 1.89 or newer.
+- GStreamer 1.20+ with the codecs you need (`gst-plugins-base`, `gst-plugins-good`, optional `gst-plugins-bad` / `gst-libav`).
+- A Vulkan or OpenGL driver.
 
-Python → fast iteration, plugins, accessibility
-Rust → low CPU usage, smooth rendering, memory safety
-The goal
+### Arch Linux
 
-
-## License
-
-GPL-3.0-or-later. See `LICENSE`.
-
-## Contributing
-
-- Read `CONTRIBUTING.md` for development setup and pull request workflow.
-- Follow `CODE_OF_CONDUCT.md` for community standards.
-- Use issue and pull request templates under `.github/`.
-
-## Pip packages
-
-Install in your environment:
-
-pip install commentjson pycairo PyGObject
-
-## System Dependencies (Linux)
-
-To make GI/GTK work correctly, install the required packages for your distribution.
+```bash
+sudo pacman -S --needed rust cargo wayland vulkan-icd-loader \
+  gstreamer gst-plugins-base gst-plugins-good
+```
 
 ### Debian / Ubuntu
 
 ```bash
-sudo apt update
-sudo apt install -y \
-    python3-gi \
-    gir1.2-gtk-4.0 \
-    gir1.2-gtk4-layer-shell-1.0
+sudo apt install -y build-essential pkg-config \
+  libwayland-dev libxkbcommon-dev libvulkan-dev \
+  libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+  gstreamer1.0-plugins-base gstreamer1.0-plugins-good
 ```
 
-### Fedora
+## Build and run
 
 ```bash
-sudo dnf install -y \
-    python3-gobject \
-    gtk4 \
-    gtk4-layer-shell
+cargo build --release
+./target/release/widdgyy
+# optional: use another config directory/file
+./target/release/widdgyy --config /path/to/config.jsonc
+
+# build without GStreamer/video support
+cargo build --release --no-default-features
 ```
 
-### Arch Linux / CachyOS / EndeavourOS / Manjaro
+Or use the launcher, which builds on demand:
 
 ```bash
-sudo pacman -S --needed \
-    python-gobject \
-    gtk4 \
-    gtk4-layer-shell
+./scripts/widdgyy
 ```
 
-## Run
-
-python3 main.py
-
-Before you create your first layout, read the [Configuration & Styling Guide](docs/Configuration%20%26%20Styling%20Guide.md). It shows how to create `config.jsonc` and `styles.css`, and how sticker classes map to CSS.
-
-## AUR packaging layout
-
-This repository now includes an AUR-ready packaging scaffold in `packaging/aur/`:
-
-- `packaging/aur/PKGBUILD`
-- `packaging/aur/.SRCINFO`
-- `packaging/aur/widdgyy.sh` (launcher installed as `/usr/bin/widdgyy`)
-
-### Build locally with makepkg
-
-From `packaging/aur/`:
-
-```bash
-makepkg -si
-```
-
-## Install helper script
-
-The repository includes `scripts/install-local-cli.sh` with two install modes:
-
-- Local launcher mode (default): installs `~/.local/bin/widdgyy` pointing to your current clone.
-- Package mode: builds and installs from `packaging/aur/` using `makepkg -si`.
-
-### 1) Local launcher (no package build)
+Install the binary in `~/.local/bin`:
 
 ```bash
 ./scripts/install-local-cli.sh
-# or
-./scripts/install-local-cli.sh local
 ```
 
-This installs only a launcher in `~/.local/bin/widdgyy`. It does not copy the full repository into `~/.local/bin`.
-
-Then run:
+Build and install the Arch package (`/usr/bin/widdgyy`, assets in `/usr/share/widdgyy`):
 
 ```bash
-widdgyy
+./scripts/install-local-cli.sh package --noconfirm
 ```
 
-### 2) Build and install package (Arch/CachyOS)
+The package build runs in `~/.cache/widdgyy-makepkg`, not in the cloned repository. The installed executable is `/usr/bin/widdgyy`; you can then remove the clone/build directory if you want.
 
-```bash
-./scripts/install-local-cli.sh package
+## Configuration
+
+Widdgyy reads:
+
+- `~/.config/widdgyy/config.jsonc`
+- `~/.config/widdgyy/styles.css`
+
+A minimal example:
+
+```jsonc
+{
+  "stickers": [
+    {
+      "type": "media",
+      "path": "assets/wallpaper.mp4",
+      "width": "100%",
+      "height": "100%",
+      "z_index": -1,
+      "loop": true,
+      "class": "background"
+    },
+    {
+      "type": "vbox",
+      "class": "panel",
+      "anchor": "center",
+      "padding": 24,
+      "spacing": 12,
+      "align_items": "center",
+      "children": [
+        { "type": "clock", "class": "clock", "format": "%H:%M" },
+        { "type": "text", "class": "subtitle", "text": "Widdgyy" }
+      ]
+    }
+  ]
+}
 ```
 
-This runs `makepkg -si` inside `packaging/aur/` and installs the built package on the machine.
+```css
+:root {
+  --accent: #c7a7ff;
+}
 
-### Publish to AUR
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+  background: linear-gradient(135deg, rgba(20, 12, 35, 0.85), rgba(70, 25, 90, 0.75));
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 28px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+}
 
-1. Create a dedicated AUR git repository for `widdgyy-git`.
-2. Copy `PKGBUILD` and `.SRCINFO` from `packaging/aur/` to that AUR repo root.
-3. Regenerate `.SRCINFO` in the AUR repo:
-
-```bash
-makepkg --printsrcinfo > .SRCINFO
+.clock {
+  font-family: "Angelic War", Sans;
+  font-size: 64px;
+  font-weight: bold;
+  color: var(--accent);
+  text-shadow: 0 4px 18px rgba(0, 0, 0, 0.8);
+}
 ```
 
-4. Commit and push to AUR.
+See [docs/Configuration & Styling Guide.md](docs/Configuration%20%26%20Styling%20Guide.md) for the full schema and property reference, and [docs/Architecture & Memory.md](docs/Architecture%20%26%20Memory.md) for the lifecycle and memory rules.
+
+## CSS support
+
+Implemented in the renderer:
+
+- Colors: named, `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()`, `rgba()`, `hsl()`, `hsla()`, `transparent`, `currentColor`, legacy `r, g, b, a`.
+- Lengths: `px`, `%`, `em`, `rem`, `ex`, `ch`, `vw`, `vh`, `vmin`, `vmax`, `pt`, `pc`, `in`, `cm`, `mm`, `fr`, `auto`, `calc()`.
+- Box: `display`, width/height/min/max, margins, padding, `box-sizing`, `overflow`, `aspect-ratio`. `position`/insets are parsed; sticker anchoring is still controlled by the JSON `anchor` field.
+- Background: color, images (`url()`), linear/radial/conic gradients, position, size, repeat, clip/origin, blend mode.
+- Border/outline: width, style (solid/dashed/dotted), color, radius, outline.
+- Text: family, size, weight, style, line-height, letter/word spacing, alignment, decoration, transform, white-space, wrapping, overflow/ellipsis, shadows. `font-stretch`, `font-variant-caps` and `vertical-align` are parsed but not applied by the shaper yet.
+- Effects: opacity, box-shadow, text-shadow, blend mode, transform/transform-origin, clip-path, isolation, object-fit/object-position.
+- Layout: flex (direction, justify, align-*, gap, order, grow/shrink/basis) and CSS grid templates/auto-flow. `flex-wrap` and explicit `grid-column`/`grid-row` placement are parsed; layout currently uses a single flex line and auto-placement.
+- Animations/transitions: parsed into typed values and `@keyframes` are available to the runtime. Property interpolation is the next milestone; see `src/css/properties/transition.rs`.
+- Media queries: width/height, orientation, `prefers-reduced-motion`, `prefers-color-scheme` parsing.
+- Selectors: type, `*`, `.class`, `#id`, `[attr]`, descendant/child combinators, `:root`, `:first-child`, `:last-child`, `:only-child`, `:nth-child()`, `:not()`, `:is()`, `:where()`.
+
+Not implemented yet (tracked explicitly rather than silently ignored):
+
+- Full CSS filter pipeline (`blur()`, `brightness()`, `backdrop-filter`, etc.). Values are parsed, but only `mix-blend-mode`, opacity and shadows are painted.
+- SVG `clip-path: url(...)`.
+- `@import` (inline the file instead).
+- Animation property interpolation and transitions.
+
+## Performance and memory
+
+The render loop is event-driven:
+
+- The Wayland event loop waits with a 16 ms timeout only when a GIF/video/API sticker is active; otherwise it wakes every 200 ms for the clock.
+- Text is shaped once per content/style pair and cached (bounded to 512 entries). Painting reuses the shaped glyph runs.
+- Styles are resolved and layout runs only on load, reload and resize, not per frame.
+- Images are decoded once and shared with `Arc`; the image cache is bounded to 64 entries and pruned on reload.
+- GIFs are bounded to 240 frames / 64 M pixels. Video keeps a single latest frame.
+- Dropping the old scene on hot reload drops its media cache entries and GStreamer pipelines (`Drop` sets the pipeline to `State::Null`).
+- There are no global tick callbacks or dangling GLib timeouts.
+
+## Project layout
+
+```
+src/
+  api.rs                 API sticker worker
+  app/                   runtime, hot reload, scheduling
+  config/                JSON5 loader
+  css/
+    values/              color, length, angle, shadow, gradient, transform
+    properties/          box-model, background, border, text, effects, flex, grid, transitions
+    selector.rs          selector matching
+    parser.rs            stylesheet scanner
+    cascade.rs           specificity, variables, inheritance
+    computed.rs          typed style modules
+  layout/                box model, flex, grid
+  media/                 GStreamer video backend
+  platform/              Wayland layer-shell host
+  render/                Vello painters + wgpu surface
+  scene/                 scene graph
+  text/                  shaping + cache
+tests/offscreen_render.rs
+```
+
+## Contributing
+
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow.
+- Follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+- Use the issue and pull request templates under `.github/`.
+
+## License
+
+GPL-3.0-or-later. See [LICENSE](LICENSE).

@@ -1,50 +1,25 @@
 assets/
 
-# cache files and python cache files
-.cache/
-__pycache__/
-*/__pycache__/
-.vscode/
-.pyc
-*.pyc
-*.pyo
-*.pyd
-test/
-
-# Rust
+# Build output
 /target/
-native/video/target/
-# Opcional para librerías
-# Cargo.lock
-
-# Arch packaging artifacts (makepkg)
 packaging/aur/pkg/
 packaging/aur/src/
 packaging/aur/widdgyy-git/
 packaging/aur/*.pkg.tar.*
 packaging/aur/*.src.tar.*
 
-# VSCode
+# Editors
 .vscode/
-
-# JetBrains
 .idea/
 *.iml
-
-# CLion
-cmake-build-*/
-
-# Backups
 *.rs.bk
 *~
 
-# Logs
+# Logs / temp
 *.log
-
-# Tempo
 *.tmp
 *.temp
 
-# SO
+# OS
 .DS_Store
 Thumbs.db
