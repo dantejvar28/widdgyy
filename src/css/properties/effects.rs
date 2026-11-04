@@ -34,6 +34,36 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str, current: Color) -
             decl.mix_blend_mode = parse_blend(value);
             true
         }
+        "translate" => {
+            let values = split_ws(value);
+            let x = values
+                .first()
+                .and_then(|value| Length::parse(value).ok())
+                .unwrap_or(Length::Zero);
+            let y = values
+                .get(1)
+                .and_then(|value| Length::parse(value).ok())
+                .unwrap_or(Length::Zero);
+            decl.translate = Some((x, y));
+            true
+        }
+        "rotate" => {
+            decl.rotate = Angle::parse(value).ok();
+            true
+        }
+        "scale" => {
+            let values = split_ws(value);
+            let x = values
+                .first()
+                .and_then(|value| value.parse::<f32>().ok())
+                .unwrap_or(1.0);
+            let y = values
+                .get(1)
+                .and_then(|value| value.parse::<f32>().ok())
+                .unwrap_or(x);
+            decl.scale = Some((x, y));
+            true
+        }
         "transform" => {
             if value.eq_ignore_ascii_case("none") {
                 decl.transform = Some(Vec::new());
@@ -263,4 +293,80 @@ fn parse_clip_path(value: &str) -> Option<ClipPath> {
         "url" => ClipPath::Url(inner.trim_matches('"').trim_matches('\'').to_string()),
         _ => return None,
     })
+}
+
+/// Apply color-matrix style CSS filters to a solid color.
+///
+/// Blur/drop-shadow require an offscreen layer and are ignored here.
+pub fn apply_color_filters(
+    color: vello::peniko::Color,
+    filters: &[Filter],
+) -> vello::peniko::Color {
+    let [mut r, mut g, mut b, mut a] = color.components;
+    for filter in filters {
+        match filter {
+            Filter::Brightness(amount) => {
+                r *= amount;
+                g *= amount;
+                b *= amount;
+            }
+            Filter::Contrast(amount) => {
+                r = (r - 0.5) * amount + 0.5;
+                g = (g - 0.5) * amount + 0.5;
+                b = (b - 0.5) * amount + 0.5;
+            }
+            Filter::Saturate(amount) => {
+                let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                r = luma + (r - luma) * amount;
+                g = luma + (g - luma) * amount;
+                b = luma + (b - luma) * amount;
+            }
+            Filter::Grayscale(amount) => {
+                let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                r += (luma - r) * amount;
+                g += (luma - g) * amount;
+                b += (luma - b) * amount;
+            }
+            Filter::Sepia(amount) => {
+                let (sr, sg, sb) = (
+                    0.393 * r + 0.769 * g + 0.189 * b,
+                    0.349 * r + 0.686 * g + 0.168 * b,
+                    0.272 * r + 0.534 * g + 0.131 * b,
+                );
+                r += (sr - r) * amount;
+                g += (sg - g) * amount;
+                b += (sb - b) * amount;
+            }
+            Filter::Invert(amount) => {
+                r += (1.0 - r - r) * amount;
+                g += (1.0 - g - g) * amount;
+                b += (1.0 - b - b) * amount;
+            }
+            Filter::HueRotate(angle) => {
+                let (sin, cos) = angle.to_radians().sin_cos();
+                let (nr, ng, nb) = (
+                    r * (0.213 + cos * 0.787 - sin * 0.213)
+                        + g * (0.715 - cos * 0.715 - sin * 0.715)
+                        + b * (0.072 - cos * 0.072 + sin * 0.928),
+                    r * (0.213 - cos * 0.213 + sin * 0.143)
+                        + g * (0.715 + cos * 0.285 + sin * 0.140)
+                        + b * (0.072 - cos * 0.072 - sin * 0.283),
+                    r * (0.213 - cos * 0.213 - sin * 0.787)
+                        + g * (0.715 - cos * 0.715 + sin * 0.715)
+                        + b * (0.072 + cos * 0.928 + sin * 0.072),
+                );
+                r = nr;
+                g = ng;
+                b = nb;
+            }
+            Filter::Opacity(amount) => a *= amount,
+            Filter::Blur(_) | Filter::DropShadow(_) => {}
+        }
+    }
+    vello::peniko::Color::new([
+        r.clamp(0.0, 1.0),
+        g.clamp(0.0, 1.0),
+        b.clamp(0.0, 1.0),
+        a.clamp(0.0, 1.0),
+    ])
 }

@@ -254,9 +254,9 @@ If a family exists but does not ship the exact weight/style (common for display 
 
 ### Effects
 
-`opacity`, `box-shadow`, `text-shadow`, `mix-blend-mode`, `transform`, `transform-origin`, `clip-path`, `isolation`, `object-fit`, `object-position`.
+`opacity`, `box-shadow` (outer and inset), `text-shadow`, `mix-blend-mode`, `filter` (color-matrix filters), individual `translate`/`rotate`/`scale`, `transform`, `transform-origin`, `clip-path` (basic shapes), `isolation`, `object-fit`, `object-position`.
 
-`filter` and `backdrop-filter` are parsed but still need the layer/filter pipeline.
+`blur()`, `drop-shadow()`, `backdrop-filter`, masks and border-image still need the offscreen layer pipeline.
 
 `text-shadow` blur is approximated with a sampled glyph disk (Vello has no arbitrary glyph blur). Larger blur radii visibly feather further; the pass count is capped for animated scenes.
 

@@ -426,6 +426,9 @@ fn fast_style_ok(node: &Node) -> bool {
     }
     if style.effects.opacity < 0.999
         || !style.effects.transform.is_empty()
+        || style.effects.translate.is_some()
+        || style.effects.rotate.is_some()
+        || style.effects.scale.is_some()
         || style.effects.clip_path != ClipPath::None
         || !style.effects.box_shadows.is_empty()
         || !style.effects.filters.is_empty()

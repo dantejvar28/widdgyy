@@ -18,7 +18,11 @@ pub struct Layer {
 }
 
 pub fn node_transform(node: &Node, context: &ResolveContext) -> Affine {
-    if node.transform().is_empty() {
+    if node.transform().is_empty()
+        && node.style.effects.translate.is_none()
+        && node.style.effects.rotate.is_none()
+        && node.style.effects.scale.is_none()
+    {
         return Affine::IDENTITY;
     }
     let width = node.layout.width;

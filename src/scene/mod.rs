@@ -230,9 +230,15 @@ impl Node {
     }
 
     pub fn background_color(&self) -> Color {
-        self.animated
+        let color = self
+            .animated
             .background_color
-            .unwrap_or(self.style.background.color)
+            .unwrap_or(self.style.background.color);
+        crate::css::properties::effects::apply_color_filters(color, &self.style.effects.filters)
+    }
+
+    pub fn filter_color(&self, color: Color) -> Color {
+        crate::css::properties::effects::apply_color_filters(color, &self.style.effects.filters)
     }
 
     pub fn text_content(&self) -> Option<&TextContent> {

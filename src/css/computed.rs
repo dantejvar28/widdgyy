@@ -22,7 +22,7 @@ use super::properties::{
     FontStyle, GridAutoFlow, JustifyContent, LineHeight, Overflow, Position, TextAlign,
     TextDecoration, TextOverflow, TextTransform, TrackSize, Visibility, WhiteSpace,
 };
-use super::values::{Axis, Edges, Length, ResolveContext, Shadow, Size, TransformOp};
+use super::values::{Angle, Axis, Edges, Length, ResolveContext, Shadow, Size, TransformOp};
 
 #[derive(Clone, Debug)]
 pub struct BackgroundStyle {
@@ -143,6 +143,9 @@ pub struct EffectsStyle {
     pub backdrop_filters: Vec<Filter>,
     pub mix_blend_mode: Mix,
     pub transform: Vec<TransformOp>,
+    pub translate: Option<(Length, Length)>,
+    pub rotate: Option<Angle>,
+    pub scale: Option<(f32, f32)>,
     pub transform_origin: (Length, Length),
     pub clip_path: ClipPath,
     pub isolation: bool,
@@ -159,6 +162,9 @@ impl Default for EffectsStyle {
             backdrop_filters: Vec::new(),
             mix_blend_mode: Mix::Normal,
             transform: Vec::new(),
+            translate: None,
+            rotate: None,
+            scale: None,
             transform_origin: (Length::Percent(50.0), Length::Percent(50.0)),
             clip_path: ClipPath::None,
             isolation: false,
@@ -557,6 +563,9 @@ impl ComputedStyle {
         if let Some(transform) = &declarations.transform {
             style.effects.transform = transform.clone();
         }
+        style.effects.translate = declarations.translate.clone();
+        style.effects.rotate = declarations.rotate;
+        style.effects.scale = declarations.scale;
         if let Some(origin) = &declarations.transform_origin {
             style.effects.transform_origin = origin.clone();
         }

@@ -86,3 +86,23 @@ fn matches_attribute_operators() {
             .matches(&element, &[])
     );
 }
+
+#[test]
+fn parses_individual_transforms_and_filters() {
+    let color = Color::new([1.0, 1.0, 1.0, 1.0]);
+    let mut declarations = Declarations::default();
+    assert!(declarations.apply("translate", "10px 20px", color));
+    assert!(declarations.apply("rotate", "45deg", color));
+    assert!(declarations.apply("scale", "2 0.5", color));
+    assert!(declarations.translate.is_some());
+    assert!(declarations.rotate.is_some());
+    assert_eq!(declarations.scale, Some((2.0, 0.5)));
+
+    assert!(declarations.apply("filter", "brightness(50%)", color));
+    let filtered = widdgyy::css::properties::effects::apply_color_filters(
+        Color::new([1.0, 0.5, 0.25, 1.0]),
+        &declarations.filter.unwrap(),
+    );
+    assert!((filtered.components[0] - 0.5).abs() < 0.01);
+    assert!((filtered.components[1] - 0.25).abs() < 0.01);
+}
