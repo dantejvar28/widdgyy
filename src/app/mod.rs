@@ -10,6 +10,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
@@ -25,7 +26,9 @@ use crate::css::properties::ClipPath;
 use crate::css::{Axis, Overflow, Stylesheet, Viewport, Visibility};
 use crate::layout::LayoutEngine;
 use crate::render::media_painter::media_draw_rect;
-use crate::render::{MediaStore, Painter, VideoFrame};
+use crate::render::{
+    FilterLayer, MediaStore, Painter, VideoFrame, has_spatial_filter, root_spatial_filter,
+};
 use crate::scene::{MediaKind, Node, NodeKind, Scene};
 use crate::text::TextEngine;
 use crate::user_config_dir;
@@ -39,6 +42,7 @@ pub struct Runtime {
     pub media: MediaStore,
     pub api: ApiManager,
     canvas: VelloScene,
+    layers: Vec<FilterLayer>,
     viewport: Viewport,
     last_tick: Instant,
     pending_reload: Option<Instant>,
@@ -59,6 +63,9 @@ pub struct FramePlan {
     pub fast: bool,
     pub overlay_updated: bool,
     pub video: Option<VideoFrame>,
+    /// True when `Runtime::render_layers()` must be used instead of the single
+    /// cached overlay scene. Only set for the full (non-video) path.
+    pub filtered: bool,
 }
 
 impl Runtime {
@@ -86,6 +93,7 @@ impl Runtime {
             media: MediaStore::new(),
             api: ApiManager::new(),
             canvas: VelloScene::new(),
+            layers: Vec::new(),
             viewport,
             last_tick: Instant::now(),
             pending_reload: None,
@@ -238,6 +246,7 @@ impl Runtime {
         let (animations, active) = animation::prepare_scene(&mut self.scene, &self.stylesheet, now);
         self.animations = animations;
         self.animations_active = active;
+        self.layers.clear();
         self.overlay_dirty = true;
         self.fast_mode = false;
         self.dirty = true;
@@ -279,6 +288,17 @@ impl Runtime {
     /// Prepare the next frame. Fast path videos are drawn as a single wgpu
     /// texture; the Vello overlay is only re-rendered when its content changes.
     pub fn prepare_frame(&mut self) -> FramePlan {
+        log_nested_spatial_filters(&self.scene);
+        // Spatial filters need offscreen layers, which the fast video
+        // compositor cannot provide. Fall back to the full Vello path for such
+        // scenes instead of regressing video playback for everyone else.
+        let has_filtered_root = self
+            .scene
+            .roots
+            .iter()
+            .any(|root| root_spatial_filter(root).is_some());
+        self.layers.clear();
+
         let candidate = self.background_video_node().and_then(|node| {
             let media = node.media_content()?.clone();
             let (x, y, width, height) = media_draw_rect(node)?;
@@ -292,7 +312,8 @@ impl Runtime {
             ))
         });
 
-        if let Some((uid, media, x, y, width, height)) = candidate
+        if !has_filtered_root
+            && let Some((uid, media, x, y, width, height)) = candidate
             && let Some(image) = self.media.video_data(&media)
         {
             if !self.fast_mode {
@@ -318,17 +339,68 @@ impl Runtime {
                     width: width.max(1.0),
                     height: height.max(1.0),
                 }),
+                filtered: false,
             };
         }
 
         self.fast_mode = false;
-        self.prepare_full()
+        self.prepare_full(has_filtered_root)
     }
 
-    fn prepare_full(&mut self) -> FramePlan {
+    fn prepare_full(&mut self, has_filtered_root: bool) -> FramePlan {
         self.canvas.reset();
-        let mut painter = Painter::new(&mut self.text, &mut self.media);
-        painter.paint(&self.scene, &mut self.canvas);
+
+        if !has_filtered_root {
+            let mut painter = Painter::new(&mut self.text, &mut self.media);
+            painter.paint(&self.scene, &mut self.canvas);
+            self.overlay_dirty = false;
+            self.dirty = false;
+            self.scene.clear_dirty();
+            return FramePlan {
+                fast: false,
+                overlay_updated: true,
+                video: None,
+                filtered: false,
+            };
+        }
+
+        // Keep paint order: consecutive unfiltered roots share a scene, while
+        // each filtered root gets its own layer.
+        let mut indices: Vec<usize> = (0..self.scene.roots.len()).collect();
+        indices.sort_by_key(|index| self.scene.roots[*index].z_index);
+        let mut layers = Vec::with_capacity(indices.len());
+        let mut pending: Option<VelloScene> = None;
+        {
+            let mut painter = Painter::new(&mut self.text, &mut self.media);
+            for index in indices {
+                let root = &self.scene.roots[index];
+                if let Some(filter) = root_spatial_filter(root) {
+                    if let Some(scene) = pending.take() {
+                        layers.push(FilterLayer {
+                            scene,
+                            filter: None,
+                        });
+                    }
+                    let mut scene = VelloScene::new();
+                    painter.paint_root(root, &mut scene);
+                    layers.push(FilterLayer {
+                        scene,
+                        filter: Some(filter),
+                    });
+                } else {
+                    let scene = pending.get_or_insert_with(VelloScene::new);
+                    painter.paint_root(root, scene);
+                }
+            }
+        }
+        if let Some(scene) = pending.take() {
+            layers.push(FilterLayer {
+                scene,
+                filter: None,
+            });
+        }
+
+        self.layers = layers;
         self.overlay_dirty = false;
         self.dirty = false;
         self.scene.clear_dirty();
@@ -336,11 +408,18 @@ impl Runtime {
             fast: false,
             overlay_updated: true,
             video: None,
+            filtered: true,
         }
     }
 
     pub fn overlay_scene(&self) -> &VelloScene {
         &self.canvas
+    }
+
+    /// Root layers prepared by the last `prepare_frame` call. Only meaningful
+    /// when `FramePlan::filtered` is true.
+    pub fn render_layers(&self) -> &[FilterLayer] {
+        &self.layers
     }
 
     fn background_video_node(&self) -> Option<&Node> {
@@ -459,6 +538,26 @@ fn fast_style_ok(node: &Node) -> bool {
         return false;
     }
     style.overflow_x == Overflow::Visible && style.overflow_y == Overflow::Visible
+}
+
+/// Nested spatial filters are not rendered offscreen yet. Warn once so a
+/// stylesheet using them does not fail silently.
+fn log_nested_spatial_filters(scene: &Scene) {
+    static CHECKED: AtomicBool = AtomicBool::new(false);
+    if CHECKED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    fn nested(node: &Node) -> bool {
+        node.children
+            .iter()
+            .any(|child| has_spatial_filter(&child.style.effects.filters) || nested(child))
+    }
+    if scene.roots.iter().any(nested) {
+        log::debug!(
+            "nested CSS blur()/drop-shadow() filters are unsupported; \
+             only root scene nodes are filtered"
+        );
+    }
 }
 
 fn load_stylesheet(path: &Path) -> Stylesheet {

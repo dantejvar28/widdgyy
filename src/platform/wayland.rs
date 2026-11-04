@@ -161,6 +161,10 @@ impl WaylandState {
             if let Err(error) = gpu.render_composite(plan.video.as_ref()) {
                 log::error!("video composite failed: {error:#}");
             }
+        } else if plan.filtered {
+            if let Err(error) = gpu.render_layers(self.runtime.render_layers()) {
+                log::error!("filtered render failed: {error:#}");
+            }
         } else if let Err(error) = gpu.render(self.runtime.overlay_scene()) {
             log::error!("render failed: {error:#}");
         }

@@ -1,0 +1,804 @@
+// SPDX-FileCopyrightText: 2026 Daniel
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! Offscreen CSS spatial filters (`blur()` and `drop-shadow()`).
+//!
+//! Only scene roots trigger this path. Each filtered root is painted into its
+//! own Vello scene, rasterized to a transient layer texture, blurred, and then
+//! composited over the accumulated target in z-order. Unfiltered roots are
+//! grouped into runs and composited without a blur pass, so interleaved roots
+//! keep their paint order.
+//!
+//! Limits, kept intentionally small:
+//! * Nested (non-root) spatial filters are ignored; the caller logs once.
+//! * When a node has several spatial filters, a `blur()` wins over
+//!   `drop-shadow()` and multiple blur radii collapse to the largest one.
+//! * The blur radius is approximate: a fixed nine-tap Gaussian per axis.
+
+use vello::Scene as VelloScene;
+use wgpu::util::DeviceExt;
+use wgpu::{
+    BindGroup, BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BindingType,
+    BlendComponent, BlendFactor, BlendOperation, BlendState, Buffer, BufferBindingType,
+    BufferUsages, ColorTargetState, ColorWrites, CommandEncoder, Device, FragmentState,
+    MultisampleState, PipelineLayoutDescriptor, PrimitiveState, Queue, RenderPassColorAttachment,
+    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerBindingType,
+    SamplerDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages, Texture, TextureFormat,
+    TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension,
+    VertexState,
+};
+
+use crate::css::Axis;
+use crate::css::properties::Filter;
+use crate::css::values::ResolveContext;
+use crate::scene::Node;
+
+/// A spatial filter resolved to pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SpatialFilter {
+    Blur {
+        radius: f32,
+    },
+    DropShadow {
+        blur: f32,
+        offset: (f32, f32),
+        /// Straight-alpha shadow colour.
+        color: [f32; 4],
+    },
+}
+
+/// One compositing layer, in paint order.
+pub struct FilterLayer {
+    pub scene: VelloScene,
+    pub filter: Option<SpatialFilter>,
+}
+
+/// Cheap classification used for logging and fast-path decisions.
+pub fn has_spatial_filter(filters: &[Filter]) -> bool {
+    filters
+        .iter()
+        .any(|filter| matches!(filter, Filter::Blur(_) | Filter::DropShadow(_)))
+}
+
+/// Resolve the spatial filter for a root node.
+///
+/// Only the root's own filter list is considered. Colour filters are applied
+/// while painting colours, so they intentionally do not appear here.
+pub fn root_spatial_filter(node: &Node) -> Option<SpatialFilter> {
+    let width = node.layout.width.max(0.0);
+    let height = node.layout.height.max(0.0);
+    let context = node
+        .style
+        .resolve_context(crate::css::Viewport::default(), width, height);
+    spatial_filter(&node.style.effects.filters, &context)
+}
+
+/// Resolve a filter list. `blur()` takes priority when both spatial filters
+/// are present; the drop shadow is then ignored (documented approximation).
+pub fn spatial_filter(filters: &[Filter], context: &ResolveContext) -> Option<SpatialFilter> {
+    let mut blur_radius: Option<f32> = None;
+    let mut shadow = None;
+
+    for filter in filters {
+        match filter {
+            Filter::Blur(length) => {
+                let radius = length.resolve(context, Axis::Horizontal).max(0.0);
+                blur_radius = Some(blur_radius.map_or(radius, |current| current.max(radius)));
+            }
+            Filter::DropShadow(value) if shadow.is_none() => {
+                shadow = Some(SpatialFilter::DropShadow {
+                    blur: value.blur.resolve(context, Axis::Horizontal).max(0.0),
+                    offset: (
+                        value.offset_x.resolve(context, Axis::Horizontal),
+                        value.offset_y.resolve(context, Axis::Vertical),
+                    ),
+                    color: value.color.components,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(radius) = blur_radius {
+        Some(SpatialFilter::Blur { radius })
+    } else {
+        shadow
+    }
+}
+
+/// GPU resources for the offscreen filter path.
+///
+/// Three full-size textures are kept for the lifetime of the renderer (layer,
+/// horizontal blur, vertical blur) and reused for every layer and frame. This
+/// keeps memory independent of the number of filtered roots.
+pub struct FilterCompositor {
+    width: u32,
+    height: u32,
+    blur_bind_group_layout: BindGroupLayout,
+    composite_bind_group_layout: BindGroupLayout,
+    sampler: Sampler,
+    premultiply_pipeline: RenderPipeline,
+    blur_pipeline: RenderPipeline,
+    composite_pipeline: RenderPipeline,
+    layer_view: TextureView,
+    blur_a_view: TextureView,
+    blur_b_view: TextureView,
+    blur_h_bind_group: BindGroup,
+    blur_v_bind_group: BindGroup,
+    composite_plain_bind_group: BindGroup,
+    composite_blur_bind_group: BindGroup,
+    composite_shadow_bind_group: BindGroup,
+    blur_h_uniform: Buffer,
+    blur_v_uniform: Buffer,
+    composite_plain_uniform: Buffer,
+    composite_blur_uniform: Buffer,
+    composite_shadow_uniform: Buffer,
+}
+
+impl FilterCompositor {
+    pub fn new(device: &Device, format: TextureFormat, width: u32, height: u32) -> Self {
+        let shader = device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("widdgyy filter shader"),
+            source: ShaderSource::Wgsl(include_str!("filter.wgsl").into()),
+        });
+
+        let blur_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("widdgyy filter blur bind group layout"),
+                entries: &[texture_entry(0), sampler_entry(1), uniform_entry(2)],
+            });
+        let composite_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("widdgyy filter composite bind group layout"),
+                entries: &[
+                    texture_entry(0),
+                    texture_entry(1),
+                    sampler_entry(2),
+                    uniform_entry(3),
+                ],
+            });
+
+        let blur_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("widdgyy filter blur pipeline layout"),
+            bind_group_layouts: &[Some(&blur_bind_group_layout)],
+            immediate_size: 0,
+        });
+        let composite_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("widdgyy filter composite pipeline layout"),
+            bind_group_layouts: &[Some(&composite_bind_group_layout)],
+            immediate_size: 0,
+        });
+
+        let premultiply_pipeline = make_pipeline(
+            device,
+            &blur_layout,
+            &shader,
+            "fs_premultiply",
+            format,
+            BlendState::REPLACE,
+            "widdgyy filter premultiply",
+        );
+        let blur_pipeline = make_pipeline(
+            device,
+            &blur_layout,
+            &shader,
+            "fs_blur",
+            format,
+            BlendState::REPLACE,
+            "widdgyy filter blur",
+        );
+        let composite_pipeline = make_pipeline(
+            device,
+            &composite_layout,
+            &shader,
+            "fs_composite",
+            format,
+            BlendState {
+                color: BlendComponent {
+                    src_factor: BlendFactor::One,
+                    dst_factor: BlendFactor::OneMinusSrcAlpha,
+                    operation: BlendOperation::Add,
+                },
+                alpha: BlendComponent {
+                    src_factor: BlendFactor::One,
+                    dst_factor: BlendFactor::OneMinusSrcAlpha,
+                    operation: BlendOperation::Add,
+                },
+            },
+            "widdgyy filter composite",
+        );
+
+        let sampler = device.create_sampler(&SamplerDescriptor {
+            label: Some("widdgyy filter sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            ..Default::default()
+        });
+
+        let (layer_view, blur_a_view, blur_b_view) = create_filter_textures(device, width, height);
+
+        let blur_h_uniform = create_uniform(device, "widdgyy filter blur h", &[0.0; 4]);
+        let blur_v_uniform = create_uniform(device, "widdgyy filter blur v", &[0.0; 4]);
+        let composite_plain_uniform = create_uniform(
+            device,
+            "widdgyy filter composite plain",
+            &composite_params(0.0, 0.0, [0.0; 4], (0.0, 0.0)),
+        );
+        let composite_blur_uniform = create_uniform(
+            device,
+            "widdgyy filter composite blur",
+            &composite_params(1.0, 1.0, [0.0; 4], (0.0, 0.0)),
+        );
+        let composite_shadow_uniform = create_uniform(
+            device,
+            "widdgyy filter composite shadow",
+            &composite_params(2.0, 0.0, [0.0; 4], (0.0, 0.0)),
+        );
+
+        let (blur_h_bind_group, blur_v_bind_group) = create_blur_bind_groups(
+            device,
+            &blur_bind_group_layout,
+            &layer_view,
+            &blur_a_view,
+            &sampler,
+            &blur_h_uniform,
+            &blur_v_uniform,
+        );
+        let (composite_plain_bind_group, composite_blur_bind_group, composite_shadow_bind_group) =
+            create_composite_bind_groups(
+                device,
+                CompositeBindGroupSpec {
+                    layout: &composite_bind_group_layout,
+                    layer_view: &layer_view,
+                    blur_view: &blur_b_view,
+                    sampler: &sampler,
+                    plain_uniform: &composite_plain_uniform,
+                    blur_uniform: &composite_blur_uniform,
+                    shadow_uniform: &composite_shadow_uniform,
+                },
+            );
+
+        Self {
+            width: width.max(1),
+            height: height.max(1),
+            blur_bind_group_layout,
+            composite_bind_group_layout,
+            sampler,
+            premultiply_pipeline,
+            blur_pipeline,
+            composite_pipeline,
+            layer_view,
+            blur_a_view,
+            blur_b_view,
+            blur_h_bind_group,
+            blur_v_bind_group,
+            composite_plain_bind_group,
+            composite_blur_bind_group,
+            composite_shadow_bind_group,
+            blur_h_uniform,
+            blur_v_uniform,
+            composite_plain_uniform,
+            composite_blur_uniform,
+            composite_shadow_uniform,
+        }
+    }
+
+    pub fn resize(&mut self, device: &Device, width: u32, height: u32) {
+        let width = width.max(1);
+        let height = height.max(1);
+        if width == self.width && height == self.height {
+            return;
+        }
+        self.width = width;
+        self.height = height;
+        let (layer_view, blur_a_view, blur_b_view) = create_filter_textures(device, width, height);
+        self.layer_view = layer_view;
+        self.blur_a_view = blur_a_view;
+        self.blur_b_view = blur_b_view;
+
+        let (blur_h_bind_group, blur_v_bind_group) = create_blur_bind_groups(
+            device,
+            &self.blur_bind_group_layout,
+            &self.layer_view,
+            &self.blur_a_view,
+            &self.sampler,
+            &self.blur_h_uniform,
+            &self.blur_v_uniform,
+        );
+        self.blur_h_bind_group = blur_h_bind_group;
+        self.blur_v_bind_group = blur_v_bind_group;
+
+        let (composite_plain_bind_group, composite_blur_bind_group, composite_shadow_bind_group) =
+            create_composite_bind_groups(
+                device,
+                CompositeBindGroupSpec {
+                    layout: &self.composite_bind_group_layout,
+                    layer_view: &self.layer_view,
+                    blur_view: &self.blur_b_view,
+                    sampler: &self.sampler,
+                    plain_uniform: &self.composite_plain_uniform,
+                    blur_uniform: &self.composite_blur_uniform,
+                    shadow_uniform: &self.composite_shadow_uniform,
+                },
+            );
+        self.composite_plain_bind_group = composite_plain_bind_group;
+        self.composite_blur_bind_group = composite_blur_bind_group;
+        self.composite_shadow_bind_group = composite_shadow_bind_group;
+    }
+
+    /// Vello target for painting the current root layer.
+    pub fn layer_view(&self) -> &TextureView {
+        &self.layer_view
+    }
+
+    /// Record the blur and composite passes for one layer.
+    ///
+    /// `clear` must be set for the first layer so the target starts
+    /// transparent; later layers load the accumulated result.
+    pub fn encode_layer(
+        &mut self,
+        queue: &Queue,
+        encoder: &mut CommandEncoder,
+        target: &TextureView,
+        filter: Option<SpatialFilter>,
+        clear: bool,
+    ) {
+        let Some(filter) = filter else {
+            self.composite(encoder, target, clear, CompositeMode::Plain);
+            return;
+        };
+
+        let blur_radius = match filter {
+            SpatialFilter::Blur { radius } => radius,
+            SpatialFilter::DropShadow { blur, .. } => blur,
+        };
+        // The weights above approximate a Gaussian with sigma ≈ 2 in tap
+        // units; half the radius per tap makes the visible width close to the
+        // CSS length without needing a second shader for each scale.
+        let step = (blur_radius * 0.5).max(0.0);
+        let step_x = step / self.width as f32;
+        let step_y = step / self.height as f32;
+        write_uniform(queue, &self.blur_h_uniform, &[step_x, 0.0, 0.0, 0.0]);
+        write_uniform(queue, &self.blur_v_uniform, &[0.0, step_y, 0.0, 0.0]);
+
+        self.blur_pass(
+            encoder,
+            &self.blur_a_view,
+            &self.premultiply_pipeline,
+            &self.blur_h_bind_group,
+        );
+        self.blur_pass(
+            encoder,
+            &self.blur_b_view,
+            &self.blur_pipeline,
+            &self.blur_v_bind_group,
+        );
+
+        match filter {
+            SpatialFilter::Blur { .. } => {
+                self.composite(encoder, target, clear, CompositeMode::Blurred);
+            }
+            SpatialFilter::DropShadow { offset, color, .. } => {
+                let offset = (offset.0 / self.width as f32, offset.1 / self.height as f32);
+                write_uniform(
+                    queue,
+                    &self.composite_shadow_uniform,
+                    &composite_params(2.0, 0.0, color, offset),
+                );
+                self.composite(encoder, target, clear, CompositeMode::Shadow);
+            }
+        }
+    }
+
+    fn blur_pass(
+        &self,
+        encoder: &mut CommandEncoder,
+        target: &TextureView,
+        pipeline: &RenderPipeline,
+        bind_group: &BindGroup,
+    ) {
+        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("widdgyy filter blur"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    fn composite(
+        &self,
+        encoder: &mut CommandEncoder,
+        target: &TextureView,
+        clear: bool,
+        mode: CompositeMode,
+    ) {
+        let bind_group = match mode {
+            CompositeMode::Plain => &self.composite_plain_bind_group,
+            CompositeMode::Blurred => &self.composite_blur_bind_group,
+            CompositeMode::Shadow => &self.composite_shadow_bind_group,
+        };
+        let load = if clear {
+            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+        } else {
+            wgpu::LoadOp::Load
+        };
+        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("widdgyy filter composite"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&self.composite_pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+}
+
+#[derive(Clone, Copy)]
+enum CompositeMode {
+    Plain,
+    Blurred,
+    Shadow,
+}
+
+fn texture_entry(binding: u32) -> BindGroupLayoutEntry {
+    BindGroupLayoutEntry {
+        binding,
+        visibility: ShaderStages::FRAGMENT,
+        ty: BindingType::Texture {
+            sample_type: TextureSampleType::Float { filterable: true },
+            view_dimension: TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+fn sampler_entry(binding: u32) -> BindGroupLayoutEntry {
+    BindGroupLayoutEntry {
+        binding,
+        visibility: ShaderStages::FRAGMENT,
+        ty: BindingType::Sampler(SamplerBindingType::Filtering),
+        count: None,
+    }
+}
+
+fn uniform_entry(binding: u32) -> BindGroupLayoutEntry {
+    BindGroupLayoutEntry {
+        binding,
+        visibility: ShaderStages::FRAGMENT,
+        ty: BindingType::Buffer {
+            ty: BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+fn make_pipeline(
+    device: &Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    entry_point: &'static str,
+    format: TextureFormat,
+    blend: BlendState,
+    label: &'static str,
+) -> RenderPipeline {
+    device.create_render_pipeline(&RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        primitive: PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: MultisampleState::default(),
+        fragment: Some(FragmentState {
+            module: shader,
+            entry_point: Some(entry_point),
+            targets: &[Some(ColorTargetState {
+                format,
+                blend: Some(blend),
+                write_mask: ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+fn create_filter_textures(
+    device: &Device,
+    width: u32,
+    height: u32,
+) -> (TextureView, TextureView, TextureView) {
+    let size = wgpu::Extent3d {
+        width: width.max(1),
+        height: height.max(1),
+        depth_or_array_layers: 1,
+    };
+    let layer = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("widdgyy filter layer"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: TextureFormat::Rgba8Unorm,
+        usage: TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let blur_a = create_blur_texture(device, "widdgyy filter blur a", size);
+    let blur_b = create_blur_texture(device, "widdgyy filter blur b", size);
+    (
+        layer.create_view(&TextureViewDescriptor::default()),
+        blur_a.create_view(&TextureViewDescriptor::default()),
+        blur_b.create_view(&TextureViewDescriptor::default()),
+    )
+}
+
+fn create_blur_texture(device: &Device, label: &str, size: wgpu::Extent3d) -> Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: TextureFormat::Rgba8Unorm,
+        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    })
+}
+
+fn create_uniform(device: &Device, label: &str, values: &[f32]) -> Buffer {
+    let bytes = f32_bytes(values);
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(label),
+        contents: &bytes,
+        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+    })
+}
+
+fn write_uniform(queue: &Queue, buffer: &Buffer, values: &[f32]) {
+    queue.write_buffer(buffer, 0, &f32_bytes(values));
+}
+
+fn f32_bytes(values: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(values.len() * 4);
+    for value in values {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+fn composite_params(
+    mode: f32,
+    premultiplied: f32,
+    color: [f32; 4],
+    offset: (f32, f32),
+) -> [f32; 8] {
+    [
+        color[0],
+        color[1],
+        color[2],
+        color[3],
+        offset.0,
+        offset.1,
+        mode,
+        premultiplied,
+    ]
+}
+
+fn create_blur_bind_groups(
+    device: &Device,
+    layout: &BindGroupLayout,
+    layer_view: &TextureView,
+    blur_a_view: &TextureView,
+    sampler: &Sampler,
+    blur_h_uniform: &Buffer,
+    blur_v_uniform: &Buffer,
+) -> (BindGroup, BindGroup) {
+    let horizontal = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("widdgyy filter blur h bind group"),
+        layout,
+        entries: &[
+            BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::TextureView(layer_view),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::Sampler(sampler),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: blur_h_uniform.as_entire_binding(),
+            },
+        ],
+    });
+    let vertical = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("widdgyy filter blur v bind group"),
+        layout,
+        entries: &[
+            BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::TextureView(blur_a_view),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::Sampler(sampler),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: blur_v_uniform.as_entire_binding(),
+            },
+        ],
+    });
+    (horizontal, vertical)
+}
+
+struct CompositeBindGroupSpec<'a> {
+    layout: &'a BindGroupLayout,
+    layer_view: &'a TextureView,
+    blur_view: &'a TextureView,
+    sampler: &'a Sampler,
+    plain_uniform: &'a Buffer,
+    blur_uniform: &'a Buffer,
+    shadow_uniform: &'a Buffer,
+}
+
+fn create_composite_bind_groups(
+    device: &Device,
+    spec: CompositeBindGroupSpec<'_>,
+) -> (BindGroup, BindGroup, BindGroup) {
+    let make = |label: &str, layer: &TextureView, blur: &TextureView, uniform: &Buffer| {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout: spec.layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(layer),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::TextureView(blur),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::Sampler(spec.sampler),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: uniform.as_entire_binding(),
+                },
+            ],
+        })
+    };
+    (
+        make(
+            "widdgyy filter composite plain",
+            spec.layer_view,
+            spec.layer_view,
+            spec.plain_uniform,
+        ),
+        make(
+            "widdgyy filter composite blur",
+            spec.blur_view,
+            spec.blur_view,
+            spec.blur_uniform,
+        ),
+        make(
+            "widdgyy filter composite shadow",
+            spec.layer_view,
+            spec.blur_view,
+            spec.shadow_uniform,
+        ),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::css::values::{Length, Shadow};
+
+    fn shadow() -> Filter {
+        Filter::DropShadow(Shadow {
+            offset_x: Length::px(4.0),
+            offset_y: Length::px(6.0),
+            blur: Length::px(10.0),
+            spread: Length::Zero,
+            color: vello::peniko::Color::new([0.0, 0.0, 0.0, 0.5]),
+            inset: false,
+        })
+    }
+
+    #[test]
+    fn classifies_blur_radius() {
+        let context = ResolveContext::default();
+        let filter = spatial_filter(&[Filter::Blur(Length::px(8.0))], &context);
+        assert_eq!(filter, Some(SpatialFilter::Blur { radius: 8.0 }));
+    }
+
+    #[test]
+    fn resolves_drop_shadow_geometry() {
+        let context = ResolveContext::default();
+        let filter = spatial_filter(&[shadow()], &context);
+        assert_eq!(
+            filter,
+            Some(SpatialFilter::DropShadow {
+                blur: 10.0,
+                offset: (4.0, 6.0),
+                color: [0.0, 0.0, 0.0, 0.5],
+            })
+        );
+    }
+
+    #[test]
+    fn ignores_colour_filters() {
+        let context = ResolveContext::default();
+        assert_eq!(
+            spatial_filter(
+                &[
+                    Filter::Brightness(1.2),
+                    Filter::Grayscale(1.0),
+                    Filter::HueRotate(crate::css::values::Angle(45.0)),
+                ],
+                &context,
+            ),
+            None
+        );
+        assert!(!has_spatial_filter(&[Filter::Saturate(0.5)]));
+    }
+
+    #[test]
+    fn blur_wins_when_both_spatial_filters_are_present() {
+        let context = ResolveContext::default();
+        assert_eq!(
+            spatial_filter(&[shadow(), Filter::Blur(Length::px(3.0))], &context),
+            Some(SpatialFilter::Blur { radius: 3.0 })
+        );
+    }
+
+    #[test]
+    fn largest_blur_radius_wins() {
+        let context = ResolveContext::default();
+        assert_eq!(
+            spatial_filter(
+                &[Filter::Blur(Length::px(3.0)), Filter::Blur(Length::px(9.0)),],
+                &context,
+            ),
+            Some(SpatialFilter::Blur { radius: 9.0 })
+        );
+    }
+}

@@ -54,6 +54,12 @@ impl<'a> Painter<'a> {
         }
     }
 
+    /// Paint a single root (and its subtree) into its own scene. Used by the
+    /// offscreen filter path to isolate filtered roots.
+    pub fn paint_root(&mut self, node: &Node, canvas: &mut Scene) {
+        self.paint_node(node, Affine::IDENTITY, None, canvas);
+    }
+
     fn paint_node(
         &mut self,
         node: &Node,

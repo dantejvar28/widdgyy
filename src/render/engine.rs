@@ -17,6 +17,7 @@ use wgpu::{
 };
 
 use super::compositor::{Compositor, VideoFrame};
+use super::filter::{FilterCompositor, FilterLayer};
 
 pub struct GpuRenderer {
     pub device: Device,
@@ -26,6 +27,7 @@ pub struct GpuRenderer {
     pub format: TextureFormat,
     vello: VelloRenderer,
     compositor: Compositor,
+    filter: FilterCompositor,
     target: Texture,
     target_view: TextureView,
     blitter: TextureBlitter,
@@ -108,6 +110,7 @@ impl GpuRenderer {
         let (target, target_view) = create_target(&device, width, height);
         let blitter = TextureBlitter::new(&device, format);
         let compositor = Compositor::new(&device, format, width, height);
+        let filter = FilterCompositor::new(&device, TextureFormat::Rgba8Unorm, width, height);
 
         Ok(Self {
             device,
@@ -117,6 +120,7 @@ impl GpuRenderer {
             format,
             vello,
             compositor,
+            filter,
             target,
             target_view,
             blitter,
@@ -140,6 +144,7 @@ impl GpuRenderer {
         self.target = target;
         self.target_view = view;
         self.compositor.resize(&self.device, width, height);
+        self.filter.resize(&self.device, width, height);
     }
 
     pub fn size(&self) -> (u32, u32) {
@@ -215,6 +220,62 @@ impl GpuRenderer {
         Ok(())
     }
 
+    /// Rasterize root layers in paint order. Filtered layers go through the
+    /// offscreen blur/drop-shadow passes; unfiltered runs are composited
+    /// directly. The accumulated target is then blitted to the surface.
+    pub fn render_layers(&mut self, layers: &[FilterLayer]) -> Result<()> {
+        if layers.is_empty() {
+            return Ok(());
+        }
+        let params = RenderParams {
+            base_color: Color::new([0.0, 0.0, 0.0, 0.0]),
+            width: self.width,
+            height: self.height,
+            antialiasing_method: AaConfig::Area,
+        };
+        for (index, layer) in layers.iter().enumerate() {
+            self.vello
+                .render_to_texture(
+                    &self.device,
+                    &self.queue,
+                    &layer.scene,
+                    self.filter.layer_view(),
+                    &params,
+                )
+                .context("Vello filter layer rasterization")?;
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("widdgyy filter composite"),
+                });
+            self.filter.encode_layer(
+                &self.queue,
+                &mut encoder,
+                &self.target_view,
+                layer.filter,
+                index == 0,
+            );
+            self.queue.submit(Some(encoder.finish()));
+        }
+
+        let Some(frame) = self.acquire_surface() else {
+            return Ok(());
+        };
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("widdgyy filtered blit"),
+            });
+        self.blitter
+            .copy(&self.device, &mut encoder, &self.target_view, &view);
+        self.queue.submit(Some(encoder.finish()));
+        self.queue.present(frame);
+        Ok(())
+    }
+
     fn acquire_surface(&mut self) -> Option<wgpu::SurfaceTexture> {
         match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
@@ -254,7 +315,9 @@ fn create_target(device: &Device, width: u32, height: u32) -> (Texture, TextureV
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: TextureFormat::Rgba8Unorm,
-        usage: TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
+        usage: TextureUsages::STORAGE_BINDING
+            | TextureUsages::TEXTURE_BINDING
+            | TextureUsages::RENDER_ATTACHMENT,
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
