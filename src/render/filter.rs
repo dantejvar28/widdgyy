@@ -125,6 +125,7 @@ pub struct FilterCompositor {
     blur_b_view: TextureView,
     blur_h_bind_group: BindGroup,
     blur_v_bind_group: BindGroup,
+    blur_h2_bind_group: BindGroup,
     composite_plain_bind_group: BindGroup,
     composite_blur_bind_group: BindGroup,
     composite_shadow_bind_group: BindGroup,
@@ -238,14 +239,17 @@ impl FilterCompositor {
             &composite_params(2.0, 0.0, [0.0; 4], (0.0, 0.0)),
         );
 
-        let (blur_h_bind_group, blur_v_bind_group) = create_blur_bind_groups(
+        let (blur_h_bind_group, blur_v_bind_group, blur_h2_bind_group) = create_blur_bind_groups(
             device,
-            &blur_bind_group_layout,
-            &layer_view,
-            &blur_a_view,
-            &sampler,
-            &blur_h_uniform,
-            &blur_v_uniform,
+            BlurBindGroupSpec {
+                layout: &blur_bind_group_layout,
+                layer_view: &layer_view,
+                blur_a_view: &blur_a_view,
+                blur_b_view: &blur_b_view,
+                sampler: &sampler,
+                blur_h_uniform: &blur_h_uniform,
+                blur_v_uniform: &blur_v_uniform,
+            },
         );
         let (composite_plain_bind_group, composite_blur_bind_group, composite_shadow_bind_group) =
             create_composite_bind_groups(
@@ -275,6 +279,7 @@ impl FilterCompositor {
             blur_b_view,
             blur_h_bind_group,
             blur_v_bind_group,
+            blur_h2_bind_group,
             composite_plain_bind_group,
             composite_blur_bind_group,
             composite_shadow_bind_group,
@@ -299,17 +304,21 @@ impl FilterCompositor {
         self.blur_a_view = blur_a_view;
         self.blur_b_view = blur_b_view;
 
-        let (blur_h_bind_group, blur_v_bind_group) = create_blur_bind_groups(
+        let (blur_h_bind_group, blur_v_bind_group, blur_h2_bind_group) = create_blur_bind_groups(
             device,
-            &self.blur_bind_group_layout,
-            &self.layer_view,
-            &self.blur_a_view,
-            &self.sampler,
-            &self.blur_h_uniform,
-            &self.blur_v_uniform,
+            BlurBindGroupSpec {
+                layout: &self.blur_bind_group_layout,
+                layer_view: &self.layer_view,
+                blur_a_view: &self.blur_a_view,
+                blur_b_view: &self.blur_b_view,
+                sampler: &self.sampler,
+                blur_h_uniform: &self.blur_h_uniform,
+                blur_v_uniform: &self.blur_v_uniform,
+            },
         );
         self.blur_h_bind_group = blur_h_bind_group;
         self.blur_v_bind_group = blur_v_bind_group;
+        self.blur_h2_bind_group = blur_h2_bind_group;
 
         let (composite_plain_bind_group, composite_blur_bind_group, composite_shadow_bind_group) =
             create_composite_bind_groups(
@@ -345,6 +354,7 @@ impl FilterCompositor {
         target: &TextureView,
         filter: Option<SpatialFilter>,
         clear: bool,
+        blur_iterations: u32,
     ) {
         let Some(filter) = filter else {
             self.composite(encoder, target, clear, CompositeMode::Plain);
@@ -358,7 +368,8 @@ impl FilterCompositor {
         // The weights above approximate a Gaussian with sigma ≈ 2 in tap
         // units; half the radius per tap makes the visible width close to the
         // CSS length without needing a second shader for each scale.
-        let step = (blur_radius * 0.25).max(0.0);
+        let iterations = blur_iterations.clamp(1, 4);
+        let step = blur_radius * 0.25 / (iterations as f32).sqrt();
         let step_x = step / self.width as f32;
         let step_y = step / self.height as f32;
         write_uniform(queue, &self.blur_h_uniform, &[step_x, 0.0, 0.0, 0.0]);
@@ -370,12 +381,22 @@ impl FilterCompositor {
             &self.premultiply_pipeline,
             &self.blur_h_bind_group,
         );
-        self.blur_pass(
-            encoder,
-            &self.blur_b_view,
-            &self.blur_pipeline,
-            &self.blur_v_bind_group,
-        );
+        for iteration in 0..iterations {
+            self.blur_pass(
+                encoder,
+                &self.blur_b_view,
+                &self.blur_pipeline,
+                &self.blur_v_bind_group,
+            );
+            if iteration + 1 < iterations {
+                self.blur_pass(
+                    encoder,
+                    &self.blur_a_view,
+                    &self.blur_pipeline,
+                    &self.blur_h2_bind_group,
+                );
+            }
+        }
 
         match filter {
             SpatialFilter::Blur { .. } => {
@@ -619,15 +640,29 @@ fn composite_params(
     ]
 }
 
+struct BlurBindGroupSpec<'a> {
+    layout: &'a BindGroupLayout,
+    layer_view: &'a TextureView,
+    blur_a_view: &'a TextureView,
+    blur_b_view: &'a TextureView,
+    sampler: &'a Sampler,
+    blur_h_uniform: &'a Buffer,
+    blur_v_uniform: &'a Buffer,
+}
+
 fn create_blur_bind_groups(
     device: &Device,
-    layout: &BindGroupLayout,
-    layer_view: &TextureView,
-    blur_a_view: &TextureView,
-    sampler: &Sampler,
-    blur_h_uniform: &Buffer,
-    blur_v_uniform: &Buffer,
-) -> (BindGroup, BindGroup) {
+    spec: BlurBindGroupSpec<'_>,
+) -> (BindGroup, BindGroup, BindGroup) {
+    let BlurBindGroupSpec {
+        layout,
+        layer_view,
+        blur_a_view,
+        blur_b_view,
+        sampler,
+        blur_h_uniform,
+        blur_v_uniform,
+    } = spec;
     let horizontal = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("widdgyy filter blur h bind group"),
         layout,
@@ -664,7 +699,25 @@ fn create_blur_bind_groups(
             },
         ],
     });
-    (horizontal, vertical)
+    let horizontal_again = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("widdgyy filter blur h2 bind group"),
+        layout,
+        entries: &[
+            BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::TextureView(blur_b_view),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::Sampler(sampler),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: blur_h_uniform.as_entire_binding(),
+            },
+        ],
+    });
+    (horizontal, vertical, horizontal_again)
 }
 
 struct CompositeBindGroupSpec<'a> {

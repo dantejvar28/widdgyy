@@ -208,6 +208,7 @@ impl GpuRenderer {
                     radius: layer.radius,
                 }),
                 index == 0,
+                3,
             );
             self.queue.submit(Some(encoder.finish()));
         }
@@ -298,6 +299,7 @@ impl GpuRenderer {
                 &self.target_view,
                 layer.filter,
                 index == 0,
+                2,
             );
             self.queue.submit(Some(encoder.finish()));
         }
