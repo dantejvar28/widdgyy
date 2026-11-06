@@ -44,7 +44,7 @@ mkdir -p ~/.config/widdgyy
 
 ### Animated overlay glow
 
-`glow` adds a pulsing halo around the text overlay without re-rasterizing it every frame, so video playback stays smooth.
+`glow` adds a pulsing halo around bright, neutral text without re-rasterizing it every frame, so video playback stays smooth. Dark panel fills and saturated borders (for example yellow accents) are excluded, so the panel itself does not glow.
 
 | Field | Default | Description |
 | --- | --- | --- |

@@ -30,9 +30,21 @@ struct Glow {
 @group(0) @binding(1) var source_sampler: sampler;
 @group(0) @binding(2) var<uniform> glow: Glow;
 
-// Soft halo sampled around the current pixel. The overlay texture only
-// contains text and panels, so the neighbouring alpha is a good stand-in for
-// a blurred glow while staying cheap enough for video frame rate.
+// Only bright, nearly neutral pixels contribute to the halo. This keeps the
+// glow on light text while ignoring dark panel fills and saturated borders.
+fn glow_weight(color: vec3<f32>) -> f32 {
+    let max_component = max(color.r, max(color.g, color.b));
+    let min_component = min(color.r, min(color.g, color.b));
+    let luminance = dot(color, vec3<f32>(0.299, 0.587, 0.114));
+    let saturation = (max_component - min_component) / max(max_component, 1e-4);
+    let bright = smoothstep(0.55, 0.85, luminance);
+    let neutral = 1.0 - smoothstep(0.10, 0.35, saturation);
+    return bright * neutral;
+}
+
+// Soft halo sampled around the current pixel. Text glyphs are the only
+// bright neutral shapes in the overlay, so weighting samples this way yields
+// a text-only glow instead of outlining the whole panel.
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let uv = input.uv;
@@ -49,7 +61,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let distance = radius * sqrt(fraction);
         let angle = golden_angle * f32(sample);
         let offset = vec2<f32>(cos(angle), sin(angle)) * texel * distance;
-        halo_alpha += textureSample(source, source_sampler, uv + offset).a;
+        let neighbour = textureSample(source, source_sampler, uv + offset);
+        halo_alpha += neighbour.a * glow_weight(neighbour.rgb);
     }
     halo_alpha /= 12.0;
 
