@@ -40,7 +40,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // stored premultiplied. Only the pulse is left to do here.
     let glow_sample = textureSample(glow_source, source_sampler, uv);
     let glow_rgb = glow_sample.rgb / max(glow_sample.a, 1e-4);
-    let pulse = 0.62 + 0.38 * sin(glow.params.x * glow.params.y);
+    // `--glow-speed: 0` leaves the intensity to CSS keyframes.
+    var pulse = 1.0;
+    if glow.params.y > 0.0 {
+        pulse = 0.62 + 0.38 * sin(glow.params.x * glow.params.y);
+    }
     let glow_alpha = glow_sample.a * pulse;
     // Straight-alpha source-over: glow sits behind the crisp text.
     let alpha = clamp(base.a + glow_alpha, 0.0, 1.0);

@@ -190,7 +190,8 @@ impl Compositor {
             mapped_at_creation: false,
         });
         let (_overlay_texture, overlay_view) = create_overlay_texture(device, width, height);
-        let (_glow_texture, glow_view) = create_glow_texture(device, width, height);
+        let (_glow_texture, glow_view) =
+            create_glow_texture(device, width.div_ceil(2).max(1), height.div_ceil(2).max(1));
         let overlay_bind_group = create_overlay_bind_group(
             device,
             &overlay_bind_group_layout,
@@ -227,7 +228,8 @@ impl Compositor {
         self.height = height;
         let (_texture, view) = create_overlay_texture(device, width, height);
         self.overlay_view = view;
-        let (_glow_texture, glow_view) = create_glow_texture(device, width, height);
+        let (_glow_texture, glow_view) =
+            create_glow_texture(device, width.div_ceil(2).max(1), height.div_ceil(2).max(1));
         self.glow_view = glow_view;
         self.overlay_bind_group = create_overlay_bind_group(
             device,

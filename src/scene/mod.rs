@@ -7,6 +7,7 @@
 //! borrows them. Styles and layouts are recomputed only when the scene changes,
 //! never once per frame.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -121,6 +122,7 @@ pub struct AnimatedStyle {
     pub color: Option<Color>,
     pub background_color: Option<Color>,
     pub text_shadows: Option<Vec<Shadow>>,
+    pub custom_properties: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Clone, Debug)]
@@ -238,7 +240,12 @@ impl Node {
     }
 
     fn custom_property(&self, name: &str) -> Option<&str> {
-        self.style.custom_properties.get(name).map(String::as_str)
+        self.animated
+            .custom_properties
+            .as_ref()
+            .and_then(|properties| properties.get(name))
+            .or_else(|| self.style.custom_properties.get(name))
+            .map(String::as_str)
     }
 
     /// CSS-driven text glow. `--glow` enables it; the rest of the `--glow-*`

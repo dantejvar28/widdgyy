@@ -99,3 +99,52 @@ fn interpolates_text_shadow_glow() {
     assert!(matches!(shadows[0].blur, widdgyy::css::Length::Px(value) if value > 4.0));
     assert!(shadows[0].color.components[3] > 0.3);
 }
+
+#[test]
+fn interpolates_custom_properties() {
+    let css = Stylesheet::parse(
+        r#"
+        @keyframes glow {
+            from {
+                --glow-strength: 0.5;
+                --glow-radius: 8px;
+                --glow-color: #000000;
+            }
+            to {
+                --glow-strength: 1.5;
+                --glow-radius: 20px;
+                --glow-color: #ffffff;
+            }
+        }
+        .glow {
+            --glow: 1;
+            animation: glow 2s linear infinite;
+        }
+        "#,
+    );
+    let mut scene = Scene::new(Viewport::default());
+    scene
+        .roots
+        .push(Node::text("text", vec!["glow".to_string()], "Glow"));
+    scene.resolve_styles(&css);
+
+    let start = Instant::now();
+    let (sets, active) = animation::prepare_scene(&mut scene, &css, start);
+    assert!(active);
+    let set = sets.values().next().expect("compiled glow animation");
+    let (half, _) = set.sample(start + Duration::from_secs(1));
+    let properties = half.custom_properties.expect("animated custom properties");
+    assert!(!properties.contains_key("--glow"));
+    assert_eq!(
+        properties.get("--glow-strength").map(String::as_str),
+        Some("1.0000")
+    );
+    assert_eq!(
+        properties.get("--glow-radius").map(String::as_str),
+        Some("14.00px")
+    );
+    assert_eq!(
+        properties.get("--glow-color").map(String::as_str),
+        Some("rgba(128, 128, 128, 1.000)")
+    );
+}

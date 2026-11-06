@@ -153,13 +153,15 @@ impl WaylandState {
             return;
         };
         if plan.fast {
-            if plan.overlay_updated {
-                if let Err(error) = gpu.render_overlay(self.runtime.overlay_scene()) {
-                    log::error!("overlay render failed: {error:#}");
-                }
-                if let Err(error) = gpu.render_glow(self.runtime.glow_layers()) {
-                    log::error!("glow render failed: {error:#}");
-                }
+            if plan.overlay_updated
+                && let Err(error) = gpu.render_overlay(self.runtime.overlay_scene())
+            {
+                log::error!("overlay render failed: {error:#}");
+            }
+            if plan.glow_updated
+                && let Err(error) = gpu.render_glow(self.runtime.glow_layers())
+            {
+                log::error!("glow render failed: {error:#}");
             }
             if let Err(error) = gpu.render_composite(plan.video.as_ref(), self.runtime.glow_speed())
             {

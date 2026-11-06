@@ -47,6 +47,7 @@ pub struct Runtime {
     layers: Vec<FilterLayer>,
     glow_layers: Vec<GlowLayer>,
     glow_speed: f32,
+    last_glow_build: Instant,
     viewport: Viewport,
     last_tick: Instant,
     pending_reload: Option<Instant>,
@@ -56,9 +57,11 @@ pub struct Runtime {
     config_mtime: Option<std::time::SystemTime>,
     css_mtime: Option<std::time::SystemTime>,
     overlay_dirty: bool,
+    glow_dirty: bool,
     fast_mode: bool,
     animations: HashMap<u64, AnimationSet>,
     animations_active: bool,
+    last_animation_sample: Instant,
     dirty: bool,
 }
 
@@ -66,6 +69,7 @@ pub struct Runtime {
 pub struct FramePlan {
     pub fast: bool,
     pub overlay_updated: bool,
+    pub glow_updated: bool,
     pub video: Option<VideoFrame>,
     /// True when `Runtime::render_layers()` must be used instead of the single
     /// cached overlay scene. Only set for the full (non-video) path.
@@ -100,6 +104,7 @@ impl Runtime {
             layers: Vec::new(),
             glow_layers: Vec::new(),
             glow_speed: 2.0,
+            last_glow_build: Instant::now() - Duration::from_secs(1),
             viewport,
             last_tick: Instant::now(),
             pending_reload: None,
@@ -109,9 +114,11 @@ impl Runtime {
             config_mtime,
             css_mtime,
             overlay_dirty: true,
+            glow_dirty: true,
             fast_mode: false,
             animations: HashMap::new(),
             animations_active: false,
+            last_animation_sample: Instant::now() - Duration::from_secs(1),
             dirty: true,
         };
         runtime.media.set_base_dir(runtime.config.config_dir());
@@ -260,9 +267,12 @@ impl Runtime {
         let (animations, active) = animation::prepare_scene(&mut self.scene, &self.stylesheet, now);
         self.animations = animations;
         self.animations_active = active;
+        self.last_animation_sample = Instant::now() - Duration::from_secs(1);
         self.rebuild_glow();
         self.layers.clear();
         self.overlay_dirty = true;
+        self.glow_dirty = true;
+        self.last_glow_build = Instant::now() - Duration::from_secs(1);
         self.fast_mode = false;
         self.dirty = true;
     }
@@ -280,6 +290,7 @@ impl Runtime {
         if content_changed {
             self.scene.layout(&mut LayoutEngine::new(&mut self.text));
             self.overlay_dirty = true;
+            self.glow_dirty = true;
             self.dirty = true;
         }
         let media_changes = self.media.update(delta);
@@ -290,13 +301,27 @@ impl Runtime {
         if media_changes.video {
             self.dirty = true;
         }
-        let (animation_changed, animation_active) =
-            animation::update_scene(&mut self.scene, &self.animations, now);
-        if animation_changed {
-            self.overlay_dirty = true;
-            self.dirty = true;
+        // The Wayland source can wake the loop far above video frame rate.
+        // Sampling CSS animations that often is wasted work, so cap it at
+        // roughly 60 Hz.
+        let animation_due = self.animations_active
+            && now.saturating_duration_since(self.last_animation_sample)
+                >= Duration::from_millis(16);
+        if animation_due {
+            self.last_animation_sample = now;
+            let (animation_changed, glow_changed, animation_active) =
+                animation::update_scene(&mut self.scene, &self.animations, now);
+            if animation_changed {
+                self.overlay_dirty = true;
+                self.glow_dirty = true;
+                self.dirty = true;
+            }
+            if glow_changed {
+                self.glow_dirty = true;
+                self.dirty = true;
+            }
+            self.animations_active = animation_active;
         }
-        self.animations_active = animation_active;
         self.dirty
     }
 
@@ -352,7 +377,9 @@ impl Runtime {
         for radius in radii {
             let mut scene = VelloScene::new();
             let mut painter = Painter::new(&mut self.text, &mut self.media);
-            painter.paint_glow(&self.scene, &mut scene, radius);
+            // The glow is blurred at half resolution; upscaling a soft halo is
+            // visually free and quarters the filter cost.
+            painter.paint_glow(&self.scene, &mut scene, radius, 0.5);
             self.glow_layers.push(GlowLayer { scene, radius });
         }
     }
@@ -393,19 +420,30 @@ impl Runtime {
                 self.overlay_dirty = true;
             }
             let overlay_updated = self.overlay_dirty;
+            // Animated glow properties only refresh the blurred masks, so cap
+            // that work at ~30 fps while video keeps compositing at its own
+            // frame rate.
+            let glow_due =
+                self.glow_dirty && self.last_glow_build.elapsed() >= Duration::from_millis(66);
+            let glow_updated = overlay_updated || glow_due;
             if overlay_updated {
-                self.rebuild_glow();
                 self.canvas.reset();
                 self.clear_canvas();
                 let mut painter = Painter::new(&mut self.text, &mut self.media);
                 painter.paint_filtered(&self.scene, &mut self.canvas, Some(uid));
                 self.overlay_dirty = false;
             }
+            if glow_updated {
+                self.rebuild_glow();
+                self.glow_dirty = false;
+                self.last_glow_build = Instant::now();
+            }
             self.dirty = false;
             self.scene.clear_dirty();
             return FramePlan {
                 fast: true,
                 overlay_updated,
+                glow_updated,
                 video: Some(VideoFrame {
                     data: image,
                     x,
@@ -434,6 +472,7 @@ impl Runtime {
             return FramePlan {
                 fast: false,
                 overlay_updated: true,
+                glow_updated: false,
                 video: None,
                 filtered: false,
             };
@@ -482,6 +521,7 @@ impl Runtime {
         FramePlan {
             fast: false,
             overlay_updated: true,
+            glow_updated: false,
             video: None,
             filtered: true,
         }

@@ -8,7 +8,7 @@
 //! no CSS strings are parsed per frame. Transform/opacity/color animations do
 //! not trigger layout, so they work with the cached video overlay path.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::{Duration, Instant};
 
 use vello::peniko::Color;
@@ -28,6 +28,7 @@ struct FrameValues {
     color: Option<Color>,
     background_color: Option<Color>,
     text_shadows: Option<Vec<Shadow>>,
+    custom_properties: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Clone, Debug)]
@@ -43,6 +44,7 @@ struct BaseValues {
     color: Color,
     background_color: Color,
     text_shadows: Vec<Shadow>,
+    custom_properties: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -52,12 +54,14 @@ struct FrameFields {
     color: bool,
     background_color: bool,
     text_shadows: bool,
+    custom_properties: bool,
 }
 
 struct CompiledAnimation {
     animation: Animation,
     frames: Vec<CompiledFrame>,
     fields: FrameFields,
+    custom_keys: BTreeSet<String>,
 }
 
 pub struct AnimationSet {
@@ -83,6 +87,7 @@ impl AnimationSet {
             color: style.text.color,
             background_color: style.background.color,
             text_shadows: style.text.shadows.clone(),
+            custom_properties: style.custom_properties.clone(),
         };
         let mut animations = Vec::new();
         let mut infinite = false;
@@ -97,7 +102,17 @@ impl AnimationSet {
             let mut frames = Vec::new();
             for frame in &keyframes.frames {
                 let mut declarations = Declarations::default();
+                let mut custom = BTreeMap::new();
                 for (name, value) in &frame.declarations {
+                    let name = name.trim();
+                    if name.starts_with("--") {
+                        let mut lookup =
+                            |variable: &str| style.custom_properties.get(variable).cloned();
+                        let value = crate::css::parser::resolve_variables(value, &mut lookup, 0)
+                            .unwrap_or_else(|| value.clone());
+                        custom.insert(name.to_string(), value);
+                        continue;
+                    }
                     declarations.apply(name, value, base.color);
                 }
                 frames.push(CompiledFrame {
@@ -108,6 +123,7 @@ impl AnimationSet {
                         color: declarations.color,
                         background_color: declarations.background_color,
                         text_shadows: declarations.text_shadow,
+                        custom_properties: (!custom.is_empty()).then_some(custom),
                     },
                 });
             }
@@ -136,6 +152,11 @@ impl AnimationSet {
                 let iterations = animation.iteration_count.unwrap_or(1.0).max(0.0);
                 total += animation.delay + animation.duration.mul_f32(iterations);
             }
+            let custom_keys: BTreeSet<String> = frames
+                .iter()
+                .filter_map(|frame| frame.values.custom_properties.as_ref())
+                .flat_map(|properties| properties.keys().cloned())
+                .collect();
             let fields = FrameFields {
                 opacity: frames.iter().any(|frame| frame.values.opacity.is_some()),
                 transform: frames.iter().any(|frame| frame.values.transform.is_some()),
@@ -146,11 +167,13 @@ impl AnimationSet {
                 text_shadows: frames
                     .iter()
                     .any(|frame| frame.values.text_shadows.is_some()),
+                custom_properties: !custom_keys.is_empty(),
             };
             animations.push(CompiledAnimation {
                 animation: animation.clone(),
                 frames,
                 fields,
+                custom_keys,
             });
         }
         if animations.is_empty() {
@@ -267,12 +290,12 @@ fn sample_at(compiled: &CompiledAnimation, progress: f32, base: &BaseValues) -> 
         }
     }
     if before.offset >= after.offset {
-        return resolve_frame(before, base, compiled.fields);
+        return resolve_frame(before, base, compiled.fields, &compiled.custom_keys);
     }
     let local = (progress - before.offset) / (after.offset - before.offset);
     let easing = compiled.animation.timing.sample(local);
-    let a = resolve_frame(before, base, compiled.fields);
-    let b = resolve_frame(after, base, compiled.fields);
+    let a = resolve_frame(before, base, compiled.fields, &compiled.custom_keys);
+    let b = resolve_frame(after, base, compiled.fields, &compiled.custom_keys);
     FrameValues {
         opacity: lerp_option_f32(a.opacity, b.opacity, easing),
         transform: match (&a.transform, &b.transform) {
@@ -285,10 +308,20 @@ fn sample_at(compiled: &CompiledAnimation, progress: f32, base: &BaseValues) -> 
             (Some(a), Some(b)) => lerp_shadows(a, b, easing),
             _ => a.text_shadows.or(b.text_shadows),
         },
+        custom_properties: lerp_custom_properties(
+            a.custom_properties.as_ref(),
+            b.custom_properties.as_ref(),
+            easing,
+        ),
     }
 }
 
-fn resolve_frame(frame: &CompiledFrame, base: &BaseValues, fields: FrameFields) -> FrameValues {
+fn resolve_frame(
+    frame: &CompiledFrame,
+    base: &BaseValues,
+    fields: FrameFields,
+    custom_keys: &BTreeSet<String>,
+) -> FrameValues {
     FrameValues {
         opacity: fields
             .opacity
@@ -316,6 +349,20 @@ fn resolve_frame(frame: &CompiledFrame, base: &BaseValues, fields: FrameFields) 
                 .clone()
                 .unwrap_or_else(|| base.text_shadows.clone())
         }),
+        custom_properties: fields.custom_properties.then(|| {
+            custom_keys
+                .iter()
+                .filter_map(|key| {
+                    frame
+                        .values
+                        .custom_properties
+                        .as_ref()
+                        .and_then(|properties| properties.get(key))
+                        .or_else(|| base.custom_properties.get(key))
+                        .map(|value| (key.clone(), value.clone()))
+                })
+                .collect()
+        }),
     }
 }
 
@@ -334,6 +381,9 @@ fn apply_values(target: &mut AnimatedStyle, values: &FrameValues) {
     }
     if let Some(shadows) = &values.text_shadows {
         target.text_shadows = Some(shadows.clone());
+    }
+    if let Some(properties) = &values.custom_properties {
+        target.custom_properties = Some(properties.clone());
     }
 }
 
@@ -367,6 +417,83 @@ fn lerp_length(a: &Length, b: &Length, t: f32) -> Length {
                 + b.resolve(&Default::default(), values::Axis::Horizontal) * t,
         ),
     }
+}
+
+/// Interpolate two custom-property maps key by key. Keys that only exist on
+/// one side stay constant, which is the closest match to CSS's discrete
+/// fallback for values that cannot be interpolated.
+fn lerp_custom_properties(
+    a: Option<&BTreeMap<String, String>>,
+    b: Option<&BTreeMap<String, String>>,
+    t: f32,
+) -> Option<BTreeMap<String, String>> {
+    match (a, b) {
+        (None, None) => None,
+        (Some(a), None) => Some(a.clone()),
+        (None, Some(b)) => Some(b.clone()),
+        (Some(a), Some(b)) => {
+            let keys: BTreeSet<&String> = a.keys().chain(b.keys()).collect();
+            Some(
+                keys.into_iter()
+                    .filter_map(|key| match (a.get(key), b.get(key)) {
+                        (Some(a), Some(b)) => Some((key.clone(), lerp_custom_value(a, b, t))),
+                        (Some(value), None) | (None, Some(value)) => {
+                            Some((key.clone(), value.clone()))
+                        }
+                        (None, None) => None,
+                    })
+                    .collect(),
+            )
+        }
+    }
+}
+
+fn lerp_custom_value(a: &str, b: &str, t: f32) -> String {
+    let t = t.clamp(0.0, 1.0);
+    if let (Ok(a), Ok(b)) = (a.trim().parse::<f32>(), b.trim().parse::<f32>()) {
+        return format!("{:.4}", a + (b - a) * t);
+    }
+    if let (Ok(a), Ok(b)) = (Length::parse(a), Length::parse(b))
+        && let Some(value) = lerp_length_value(&a, &b, t)
+    {
+        return value;
+    }
+    if let (Some(a), Some(b)) = (
+        values::color::parse(a, Color::BLACK),
+        values::color::parse(b, Color::BLACK),
+    ) {
+        let color = values::color::mix(a, b, t);
+        let [r, g, b, a] = color.components;
+        return format!(
+            "rgba({:.0}, {:.0}, {:.0}, {:.3})",
+            r * 255.0,
+            g * 255.0,
+            b * 255.0,
+            a
+        );
+    }
+    if t < 0.5 {
+        a.to_string()
+    } else {
+        b.to_string()
+    }
+}
+
+fn lerp_length_value(a: &Length, b: &Length, t: f32) -> Option<String> {
+    let px = |a: f32, b: f32| format!("{:.2}px", a + (b - a) * t);
+    let percent = |a: f32, b: f32| format!("{:.2}%", a + (b - a) * t);
+    Some(match (a, b) {
+        (Length::Zero, Length::Zero) => "0".to_string(),
+        (Length::Zero, Length::Px(b)) => px(0.0, *b),
+        (Length::Px(a), Length::Zero) => px(*a, 0.0),
+        (Length::Px(a), Length::Px(b)) => px(*a, *b),
+        (Length::Percent(a), Length::Percent(b)) => percent(*a, *b),
+        (Length::Em(a), Length::Em(b)) => format!("{:.2}em", a + (b - a) * t),
+        (Length::Rem(a), Length::Rem(b)) => format!("{:.2}rem", a + (b - a) * t),
+        (Length::Vw(a), Length::Vw(b)) => format!("{:.2}vw", a + (b - a) * t),
+        (Length::Vh(a), Length::Vh(b)) => format!("{:.2}vh", a + (b - a) * t),
+        _ => return None,
+    })
 }
 
 fn lerp_shadows(a: &[Shadow], b: &[Shadow], t: f32) -> Option<Vec<Shadow>> {
@@ -476,18 +603,28 @@ fn prepare_node(
     }
 }
 
-/// Update animated overlays. Returns `(changed, any_active)`.
+/// Update animated overlays. Returns `(overlay_changed, glow_changed, active)`.
+/// Custom-property changes only affect the composited glow mask, so they do
+/// not force the text overlay to be repainted.
 pub fn update_scene(
     scene: &mut crate::scene::Scene,
     sets: &HashMap<u64, AnimationSet>,
     now: Instant,
-) -> (bool, bool) {
+) -> (bool, bool, bool) {
     let mut changed = false;
+    let mut glow_changed = false;
     let mut active = false;
     for root in &mut scene.roots {
-        update_node(root, sets, now, &mut changed, &mut active);
+        update_node(
+            root,
+            sets,
+            now,
+            &mut changed,
+            &mut glow_changed,
+            &mut active,
+        );
     }
-    (changed, active)
+    (changed, glow_changed, active)
 }
 
 fn update_node(
@@ -495,17 +632,31 @@ fn update_node(
     sets: &HashMap<u64, AnimationSet>,
     now: Instant,
     changed: &mut bool,
+    glow_changed: &mut bool,
     active: &mut bool,
 ) {
     if let Some(set) = sets.get(&node.uid) {
         let (overlay, is_active) = set.sample(now);
         *active |= is_active;
         if node.animated != overlay {
+            if glow_only_change(&node.animated, &overlay) {
+                *glow_changed = true;
+            } else {
+                *changed = true;
+            }
             node.animated = overlay;
-            *changed = true;
         }
     }
     for child in &mut node.children {
-        update_node(child, sets, now, changed, active);
+        update_node(child, sets, now, changed, glow_changed, active);
     }
+}
+
+fn glow_only_change(current: &AnimatedStyle, next: &AnimatedStyle) -> bool {
+    current.opacity == next.opacity
+        && current.transform == next.transform
+        && current.color == next.color
+        && current.background_color == next.background_color
+        && current.text_shadows == next.text_shadows
+        && current.custom_properties != next.custom_properties
 }

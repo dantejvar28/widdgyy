@@ -63,16 +63,18 @@ impl<'a> Painter<'a> {
     /// Paint only text nodes whose CSS `--glow` matches `radius` into a glow
     /// mask. Boxes, borders and media are intentionally skipped so the glow
     /// never leaks onto panels.
-    pub fn paint_glow(&mut self, sticker_scene: &StickerScene, canvas: &mut Scene, radius: f32) {
+    pub fn paint_glow(
+        &mut self,
+        sticker_scene: &StickerScene,
+        canvas: &mut Scene,
+        radius: f32,
+        scale: f64,
+    ) {
         let mut indices: Vec<usize> = (0..sticker_scene.roots.len()).collect();
         indices.sort_by_key(|index| sticker_scene.roots[*index].z_index);
+        let transform = Affine::scale(scale);
         for index in indices {
-            self.paint_glow_node(
-                &sticker_scene.roots[index],
-                Affine::IDENTITY,
-                radius,
-                canvas,
-            );
+            self.paint_glow_node(&sticker_scene.roots[index], transform, radius, canvas);
         }
     }
 

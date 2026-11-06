@@ -41,16 +41,29 @@ mkdir -p ~/.config/widdgyy
 Text glow is configured in `styles.css` with custom properties. Only elements that opt in with `--glow` are rendered into the glow layer, so panels, borders and other elements stay untouched.
 
 ```css
-* {
-  --glow-radius: 14px;   /* blur radius, 0–64px */
-  --glow-speed: 2;       /* pulse speed in radians per second */
+@keyframes glow {
+  from {
+    --glow-strength: 0.6;
+    --glow-radius: 10px;
+    --glow-color: #b18cff;
+  }
+  50% {
+    --glow-strength: 1.6;
+    --glow-radius: 24px;
+    --glow-color: #f0e4ff;
+  }
+  to {
+    --glow-strength: 0.6;
+    --glow-radius: 10px;
+    --glow-color: #b18cff;
+  }
 }
 
 .clock,
 .weather {
   --glow: 1;             /* enables the glow for this text */
-  --glow-color: #c9a8ff; /* halo colour; defaults to the text colour */
-  --glow-strength: 1.3;  /* per-element intensity, 0–4 */
+  --glow-speed: 0;       /* keyframes drive the animation */
+  animation: glow 3s ease-in-out infinite;
 }
 ```
 
@@ -60,9 +73,11 @@ Text glow is configured in `styles.css` with custom properties. Only elements th
 | `--glow-color` | text colour | Halo colour |
 | `--glow-radius` | `12px` | Blur radius, `0`–`64` |
 | `--glow-strength` | `1` | Intensity, `0`–`4`; each element keeps its own value |
-| `--glow-speed` | `2` | Pulse speed in radians per second (shared by the largest value) |
+| `--glow-speed` | `2` | Built-in pulse speed; set `0` when keyframes animate the glow |
 
 The glow mask is rasterized with Vello, blurred on the GPU, and added by the video compositor, so it does not re-rasterize glyphs every frame. It applies while a video wallpaper is active; without video the CSS `text-shadow` / `animation` path is used.
+
+Custom properties participate in `@keyframes` and are interpolated like normal CSS values (numbers, lengths and colours). Animating only `--glow-*` properties refreshes the blurred glow layer without repainting the text overlay.
 
 Multiple radii are supported: each distinct `--glow-radius` gets its own offscreen layer. Very large radii or many distinct radii cost more GPU work.
 
@@ -288,7 +303,7 @@ If a family exists but does not ship the exact weight/style (common for display 
 
 `blur()` and `drop-shadow()` work on root-level nodes through an offscreen layer. Nested spatial filters, `backdrop-filter`, masks and border-image are still pending.
 
-`text-shadow` blur is approximated with a compact sampled glyph halo (Vello has no arbitrary glyph blur). Large blur radii are intentionally capped to avoid readable offset copies of the glyphs; use the config-level `glow` for a wide animated halo.
+`text-shadow` blur is approximated with a compact sampled glyph halo (Vello has no arbitrary glyph blur). Large blur radii are intentionally capped to avoid readable offset copies of the glyphs; use the CSS `--glow` layer for a wide animated halo.
 
 ### Flex
 
@@ -306,7 +321,7 @@ Explicit `grid-column`/`grid-row` placement is parsed, but the layout engine cur
 
 ### Animation and transitions
 
-`animation*` and `@keyframes` are applied at runtime for `transform`, `opacity`, `color`, `background-color` and `text-shadow`, including duration, delay, timing functions, direction, iteration count and fill mode. Multiple animations per node are supported. Shadow lists of different lengths are interpolated by repeating the shorter list, matching CSS. Animating `text-shadow` re-rasterizes the text overlay every frame; prefer the config-level `glow` for a cheap continuous pulse.
+`animation*` and `@keyframes` are applied at runtime for `transform`, `opacity`, `color`, `background-color`, `text-shadow` and custom properties (`--name`), including duration, delay, timing functions, direction, iteration count and fill mode. Multiple animations per node are supported. Shadow lists of different lengths are interpolated by repeating the shorter list, matching CSS. Numeric, length and colour custom-property values are interpolated; other values switch discretely. Animating `text-shadow` re-rasterizes the text overlay every frame; prefer the CSS `--glow` layer for a cheap continuous pulse.
 
 `transition*` is parsed but not wired to style changes yet. Layout-affecting animations (width/height/margin/padding) are also pending.
 

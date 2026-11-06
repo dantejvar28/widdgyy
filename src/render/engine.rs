@@ -29,6 +29,7 @@ pub struct GpuRenderer {
     vello: VelloRenderer,
     compositor: Compositor,
     filter: FilterCompositor,
+    glow_filter: FilterCompositor,
     target: Texture,
     target_view: TextureView,
     blitter: TextureBlitter,
@@ -112,6 +113,12 @@ impl GpuRenderer {
         let blitter = TextureBlitter::new(&device, format);
         let compositor = Compositor::new(&device, format, width, height);
         let filter = FilterCompositor::new(&device, TextureFormat::Rgba8Unorm, width, height);
+        let glow_filter = FilterCompositor::new(
+            &device,
+            TextureFormat::Rgba8Unorm,
+            width.div_ceil(2).max(1),
+            height.div_ceil(2).max(1),
+        );
 
         Ok(Self {
             device,
@@ -122,6 +129,7 @@ impl GpuRenderer {
             vello,
             compositor,
             filter,
+            glow_filter,
             target,
             target_view,
             blitter,
@@ -146,6 +154,11 @@ impl GpuRenderer {
         self.target_view = view;
         self.compositor.resize(&self.device, width, height);
         self.filter.resize(&self.device, width, height);
+        self.glow_filter.resize(
+            &self.device,
+            width.div_ceil(2).max(1),
+            height.div_ceil(2).max(1),
+        );
     }
 
     pub fn size(&self) -> (u32, u32) {
@@ -179,11 +192,13 @@ impl GpuRenderer {
             self.compositor.clear_glow(&self.device, &self.queue);
             return Ok(());
         }
+        let glow_width = self.width.div_ceil(2).max(1);
+        let glow_height = self.height.div_ceil(2).max(1);
         for (index, layer) in layers.iter().enumerate() {
             let params = RenderParams {
                 base_color: Color::new([0.0, 0.0, 0.0, 0.0]),
-                width: self.width,
-                height: self.height,
+                width: glow_width,
+                height: glow_height,
                 antialiasing_method: AaConfig::Area,
             };
             self.vello
@@ -191,7 +206,7 @@ impl GpuRenderer {
                     &self.device,
                     &self.queue,
                     &layer.scene,
-                    self.filter.layer_view(),
+                    self.glow_filter.layer_view(),
                     &params,
                 )
                 .context("Vello glow rasterization")?;
@@ -200,12 +215,12 @@ impl GpuRenderer {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("widdgyy glow blur"),
                 });
-            self.filter.encode_layer(
+            self.glow_filter.encode_layer(
                 &self.queue,
                 &mut encoder,
                 self.compositor.glow_view(),
                 Some(SpatialFilter::Blur {
-                    radius: layer.radius,
+                    radius: layer.radius * 0.5,
                 }),
                 index == 0,
             );
