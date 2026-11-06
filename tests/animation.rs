@@ -106,18 +106,18 @@ fn interpolates_custom_properties() {
         r#"
         @keyframes glow {
             from {
-                --glow-strength: 0.5;
-                --glow-radius: 8px;
-                --glow-color: #000000;
+                --test-strength: 0.5;
+                --test-radius: 8px;
+                --test-color: #000000;
             }
             to {
-                --glow-strength: 1.5;
-                --glow-radius: 20px;
-                --glow-color: #ffffff;
+                --test-strength: 1.5;
+                --test-radius: 20px;
+                --test-color: #ffffff;
             }
         }
         .glow {
-            --glow: 1;
+            --test-enabled: 1;
             animation: glow 2s linear infinite;
         }
         "#,
@@ -134,17 +134,17 @@ fn interpolates_custom_properties() {
     let set = sets.values().next().expect("compiled glow animation");
     let (half, _) = set.sample(start + Duration::from_secs(1));
     let properties = half.custom_properties.expect("animated custom properties");
-    assert!(!properties.contains_key("--glow"));
+    assert!(!properties.contains_key("--test-enabled"));
     assert_eq!(
-        properties.get("--glow-strength").map(String::as_str),
+        properties.get("--test-strength").map(String::as_str),
         Some("1.0000")
     );
     assert_eq!(
-        properties.get("--glow-radius").map(String::as_str),
+        properties.get("--test-radius").map(String::as_str),
         Some("14.00px")
     );
     assert_eq!(
-        properties.get("--glow-color").map(String::as_str),
+        properties.get("--test-color").map(String::as_str),
         Some("rgba(128, 128, 128, 1.000)")
     );
 }

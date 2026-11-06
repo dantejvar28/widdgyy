@@ -38,19 +38,23 @@ struct BlurParams {
 @group(0) @binding(1) var blur_sampler: sampler;
 @group(0) @binding(2) var<uniform> blur_params: BlurParams;
 
-// Nine-tap Gaussian approximation. The weights are normalised and the
-// per-pass step scales the tap spacing to the requested blur radius.
-const BLUR_WEIGHTS = array<f32, 5>(
-    0.22702703,
-    0.19459459,
-    0.12162162,
-    0.05405405,
-    0.01621622,
+// Seventeen-tap Gaussian approximation. More taps keep large radii smooth
+// instead of showing the sampling grid as a cross-hatch pattern.
+const BLUR_WEIGHTS = array<f32, 9>(
+    0.1335712203,
+    0.1263529607,
+    0.1069554721,
+    0.0810150404,
+    0.0549127703,
+    0.0333062788,
+    0.0180768989,
+    0.0087794398,
+    0.0038155288,
 );
 
 fn blur_sample(uv: vec2<f32>, step: vec2<f32>, premultiply: bool) -> vec4<f32> {
     var sum = vec4<f32>(0.0);
-    for (var i = 0u; i < 5u; i += 1u) {
+    for (var i = 0u; i < 9u; i += 1u) {
         let offset = step * f32(i);
         var a = textureSample(blur_source, blur_sampler, uv + offset);
         var b = textureSample(blur_source, blur_sampler, uv - offset);

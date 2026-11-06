@@ -657,6 +657,6 @@ fn glow_only_change(current: &AnimatedStyle, next: &AnimatedStyle) -> bool {
         && current.transform == next.transform
         && current.color == next.color
         && current.background_color == next.background_color
-        && current.text_shadows == next.text_shadows
-        && current.custom_properties != next.custom_properties
+        && (current.text_shadows != next.text_shadows
+            || current.custom_properties != next.custom_properties)
 }

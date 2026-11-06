@@ -36,50 +36,27 @@ mkdir -p ~/.config/widdgyy
 }
 ```
 
-### Animated text glow (CSS)
+### Text shadows and glow (CSS)
 
-Text glow is configured in `styles.css` with custom properties. Only elements that opt in with `--glow` are rendered into the glow layer, so panels, borders and other elements stay untouched.
+`text-shadow` works like in a browser: each entry is a blurred, coloured copy of the text, and the list can be animated with `@keyframes`.
 
 ```css
 @keyframes glow {
-  from {
-    --glow-strength: 0.6;
-    --glow-radius: 10px;
-    --glow-color: #b18cff;
-  }
-  50% {
-    --glow-strength: 1.6;
-    --glow-radius: 24px;
-    --glow-color: #f0e4ff;
-  }
-  to {
-    --glow-strength: 0.6;
-    --glow-radius: 10px;
-    --glow-color: #b18cff;
-  }
+  from { text-shadow: 0 0 6px #00e5ff, 0 0 12px #00e5ff; }
+  to   { text-shadow: 0 0 20px #00e5ff, 0 0 40px #00e5ff, 0 0 60px #00e5ff; }
 }
 
-.clock,
-.weather {
-  --glow: 1;             /* enables the glow for this text */
-  --glow-speed: 0;       /* keyframes drive the animation */
-  animation: glow 3s ease-in-out infinite;
+.pulse {
+  color: #fff;
+  animation: glow 1.5s ease-in-out infinite alternate;
 }
 ```
 
-| Property | Default | Description |
-| --- | --- | --- |
-| `--glow` | off | Any value except `0`, `none`, `false` or `off` enables it |
-| `--glow-color` | text colour | Halo colour |
-| `--glow-radius` | `12px` | Blur radius, `0`–`64` |
-| `--glow-strength` | `1` | Intensity, `0`–`4`; each element keeps its own value |
-| `--glow-speed` | `2` | Built-in pulse speed; set `0` when keyframes animate the glow |
-
-The glow mask is rasterized with Vello, blurred on the GPU, and added by the video compositor, so it does not re-rasterize glyphs every frame. It applies while a video wallpaper is active; without video the CSS `text-shadow` / `animation` path is used.
-
-Custom properties participate in `@keyframes` and are interpolated like normal CSS values (numbers, lengths and colours). Animating only `--glow-*` properties refreshes the blurred glow layer without repainting the text overlay.
-
-Multiple radii are supported: each distinct `--glow-radius` gets its own offscreen layer. Very large radii or many distinct radii cost more GPU work.
+- Multiple shadows, offsets, colours and blur radii are supported.
+- Lists of different lengths repeat the shorter list, matching CSS.
+- The blur is a real GPU separable Gaussian applied to a glyph mask, not a set of sampled glyph copies.
+- Animating `text-shadow` refreshes the offscreen shadow texture; it does not repaint the text overlay.
+- On the video fast path, shadows are composited from their own texture. Without a video wallpaper the sampled fallback is used.
 
 Every sticker supports:
 
@@ -303,7 +280,7 @@ If a family exists but does not ship the exact weight/style (common for display 
 
 `blur()` and `drop-shadow()` work on root-level nodes through an offscreen layer. Nested spatial filters, `backdrop-filter`, masks and border-image are still pending.
 
-`text-shadow` blur is approximated with a compact sampled glyph halo (Vello has no arbitrary glyph blur). Large blur radii are intentionally capped to avoid readable offset copies of the glyphs; use the CSS `--glow` layer for a wide animated halo.
+On the video fast path `text-shadow` is rendered with a real GPU Gaussian blur. Without video the blur is approximated with a compact sampled glyph halo (Vello has no arbitrary glyph blur), capped to avoid readable offset copies.
 
 ### Flex
 
@@ -321,7 +298,7 @@ Explicit `grid-column`/`grid-row` placement is parsed, but the layout engine cur
 
 ### Animation and transitions
 
-`animation*` and `@keyframes` are applied at runtime for `transform`, `opacity`, `color`, `background-color`, `text-shadow` and custom properties (`--name`), including duration, delay, timing functions, direction, iteration count and fill mode. Multiple animations per node are supported. Shadow lists of different lengths are interpolated by repeating the shorter list, matching CSS. Numeric, length and colour custom-property values are interpolated; other values switch discretely. Animating `text-shadow` re-rasterizes the text overlay every frame; prefer the CSS `--glow` layer for a cheap continuous pulse.
+`animation*` and `@keyframes` are applied at runtime for `transform`, `opacity`, `color`, `background-color`, `text-shadow` and custom properties (`--name`), including duration, delay, timing functions, direction, iteration count and fill mode. Multiple animations per node are supported. Shadow lists of different lengths are interpolated by repeating the shorter list, matching CSS. Numeric, length and colour custom-property values are interpolated; other values switch discretely. Animating `text-shadow` refreshes the offscreen shadow layer without repainting the text overlay.
 
 `transition*` is parsed but not wired to style changes yet. Layout-affecting animations (width/height/margin/padding) are also pending.
 

@@ -358,7 +358,7 @@ impl FilterCompositor {
         // The weights above approximate a Gaussian with sigma ≈ 2 in tap
         // units; half the radius per tap makes the visible width close to the
         // CSS length without needing a second shader for each scale.
-        let step = (blur_radius * 0.5).max(0.0);
+        let step = (blur_radius * 0.25).max(0.0);
         let step_x = step / self.width as f32;
         let step_y = step / self.height as f32;
         write_uniform(queue, &self.blur_h_uniform, &[step_x, 0.0, 0.0, 0.0]);

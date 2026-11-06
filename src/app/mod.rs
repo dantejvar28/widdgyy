@@ -46,7 +46,6 @@ pub struct Runtime {
     canvas: VelloScene,
     layers: Vec<FilterLayer>,
     glow_layers: Vec<GlowLayer>,
-    glow_speed: f32,
     last_glow_build: Instant,
     viewport: Viewport,
     last_tick: Instant,
@@ -103,7 +102,6 @@ impl Runtime {
             canvas: VelloScene::new(),
             layers: Vec::new(),
             glow_layers: Vec::new(),
-            glow_speed: 2.0,
             last_glow_build: Instant::now() - Duration::from_secs(1),
             viewport,
             last_tick: Instant::now(),
@@ -133,10 +131,6 @@ impl Runtime {
 
     pub fn glow_layers(&self) -> &[GlowLayer] {
         &self.glow_layers
-    }
-
-    pub fn glow_speed(&self) -> f32 {
-        self.glow_speed
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -317,6 +311,11 @@ impl Runtime {
                 self.dirty = true;
             }
             if glow_changed {
+                // Without the video compositor text shadows still live in the
+                // overlay, so a shadow-only animation must repaint it.
+                if !self.fast_mode {
+                    self.overlay_dirty = true;
+                }
                 self.glow_dirty = true;
                 self.dirty = true;
             }
@@ -348,38 +347,36 @@ impl Runtime {
     }
 
     /// Rebuild the glow masks after a style, layout or content change. Text
-    /// nodes are grouped by `--glow-radius` so each blur radius only needs one
-    /// offscreen pass.
+    /// Text nodes are grouped by `text-shadow` blur radius so each radius only
+    /// needs one offscreen pass.
     fn rebuild_glow(&mut self) {
         self.glow_layers.clear();
         let mut radii: Vec<f32> = Vec::new();
-        let mut speed = 0.0_f32;
-        let mut found = false;
 
-        fn visit(node: &Node, radii: &mut Vec<f32>, speed: &mut f32, found: &mut bool) {
-            if node.glow_enabled() && matches!(node.kind, NodeKind::Text(_)) {
-                let radius = node.glow_radius();
-                if !radii.iter().any(|value| (*value - radius).abs() < 0.25) {
-                    radii.push(radius);
+        fn visit(node: &Node, radii: &mut Vec<f32>) {
+            if matches!(node.kind, NodeKind::Text(_)) {
+                for shadow in node.text_shadows() {
+                    if shadow.color.components[3] <= 0.0 {
+                        continue;
+                    }
+                    let (_, _, blur) = node.shadow_metrics(shadow);
+                    if !radii.iter().any(|value| (*value - blur).abs() < 0.25) {
+                        radii.push(blur);
+                    }
                 }
-                *speed = speed.max(node.glow_speed());
-                *found = true;
             }
             for child in &node.children {
-                visit(child, radii, speed, found);
+                visit(child, radii);
             }
         }
         for root in &self.scene.roots {
-            visit(root, &mut radii, &mut speed, &mut found);
+            visit(root, &mut radii);
         }
-        self.glow_speed = if found { speed } else { 2.0 };
 
         for radius in radii {
             let mut scene = VelloScene::new();
             let mut painter = Painter::new(&mut self.text, &mut self.media);
-            // The glow is blurred at half resolution; upscaling a soft halo is
-            // visually free and quarters the filter cost.
-            painter.paint_glow(&self.scene, &mut scene, radius, 0.5);
+            painter.paint_gpu_shadows(&self.scene, &mut scene, radius, 1.0);
             self.glow_layers.push(GlowLayer { scene, radius });
         }
     }
@@ -424,12 +421,13 @@ impl Runtime {
             // that work at ~30 fps while video keeps compositing at its own
             // frame rate.
             let glow_due =
-                self.glow_dirty && self.last_glow_build.elapsed() >= Duration::from_millis(66);
+                self.glow_dirty && self.last_glow_build.elapsed() >= Duration::from_millis(33);
             let glow_updated = overlay_updated || glow_due;
             if overlay_updated {
                 self.canvas.reset();
                 self.clear_canvas();
                 let mut painter = Painter::new(&mut self.text, &mut self.media);
+                painter.inline_shadows = false;
                 painter.paint_filtered(&self.scene, &mut self.canvas, Some(uid));
                 self.overlay_dirty = false;
             }

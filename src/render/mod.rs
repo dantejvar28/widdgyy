@@ -15,9 +15,9 @@ pub mod text_painter;
 
 pub use compositor::{Compositor, VideoFrame};
 
-/// One pre-rendered text glow layer. The scene contains only glyphs that opted
-/// into `--glow`; the compositor blurs it with `radius` and adds the animated
-/// pulse when the video overlay is composited.
+/// One pre-rendered text-shadow layer. The scene contains shadow glyphs for a
+/// single blur radius; the compositor blurs it and composites it behind the
+/// crisp overlay text.
 pub struct GlowLayer {
     pub scene: vello::Scene,
     pub radius: f32,

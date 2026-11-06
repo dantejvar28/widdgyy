@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::css::parser::RawDeclaration;
 use crate::css::selector::Element;
 use crate::css::values::{Shadow, TransformOp};
-use crate::css::{Axis, Cascade, ComputedStyle, Length, Viewport};
+use crate::css::{Axis, Cascade, ComputedStyle, Viewport};
 use crate::layout::{LayoutBox, LayoutEngine};
 use vello::peniko::Color;
 
@@ -239,67 +239,19 @@ impl Node {
             .unwrap_or(&self.style.text.shadows)
     }
 
-    fn custom_property(&self, name: &str) -> Option<&str> {
-        self.animated
-            .custom_properties
-            .as_ref()
-            .and_then(|properties| properties.get(name))
-            .or_else(|| self.style.custom_properties.get(name))
-            .map(String::as_str)
-    }
-
-    /// CSS-driven text glow. `--glow` enables it; the rest of the `--glow-*`
-    /// custom properties control its appearance. Custom properties inherit, so
-    /// a rule on a container can enable the glow for its text children.
-    pub fn glow_enabled(&self) -> bool {
-        let Some(value) = self.custom_property("--glow") else {
-            return false;
-        };
-        let value = value.trim();
-        !value.is_empty()
-            && !value.eq_ignore_ascii_case("0")
-            && !value.eq_ignore_ascii_case("none")
-            && !value.eq_ignore_ascii_case("false")
-            && !value.eq_ignore_ascii_case("off")
-    }
-
-    pub fn glow_radius(&self) -> f32 {
+    /// Resolve a text shadow to horizontal offset, vertical offset and blur
+    /// radius in pixels for the current box.
+    pub fn shadow_metrics(&self, shadow: &Shadow) -> (f32, f32, f32) {
         let context = self.style.resolve_context(
             Viewport::default(),
             self.layout.width.max(0.0),
             self.layout.height.max(0.0),
         );
-        let radius = self
-            .custom_property("--glow-radius")
-            .and_then(|value| Length::parse(value).ok())
-            .map(|length| length.resolve(&context, Axis::Horizontal))
-            // Unitless values are common for this custom property.
-            .or_else(|| {
-                self.custom_property("--glow-radius")
-                    .and_then(|value| value.trim().parse::<f32>().ok())
-            })
-            .unwrap_or(12.0);
-        radius.clamp(0.0, 64.0)
-    }
-
-    pub fn glow_color(&self) -> Color {
-        self.custom_property("--glow-color")
-            .and_then(|value| crate::css::values::color::parse(value, self.text_color()))
-            .unwrap_or_else(|| self.text_color())
-    }
-
-    pub fn glow_strength(&self) -> f32 {
-        self.custom_property("--glow-strength")
-            .and_then(|value| value.trim().parse::<f32>().ok())
-            .unwrap_or(1.0)
-            .clamp(0.0, 4.0)
-    }
-
-    pub fn glow_speed(&self) -> f32 {
-        self.custom_property("--glow-speed")
-            .and_then(|value| value.trim().parse::<f32>().ok())
-            .unwrap_or(2.0)
-            .clamp(0.0, 30.0)
+        (
+            shadow.offset_x.resolve(&context, Axis::Horizontal),
+            shadow.offset_y.resolve(&context, Axis::Vertical),
+            shadow.blur.resolve(&context, Axis::Horizontal).max(0.0),
+        )
     }
 
     pub fn background_color(&self) -> Color {

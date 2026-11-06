@@ -23,11 +23,18 @@ use super::{box_painter, effects_painter, media_painter, text_painter};
 pub struct Painter<'a> {
     pub text: &'a mut TextEngine,
     pub media: &'a mut MediaStore,
+    /// When false the fast video path skips the sampled text shadows; those
+    /// are rendered by the GPU shadow layer instead.
+    pub inline_shadows: bool,
 }
 
 impl<'a> Painter<'a> {
     pub fn new(text: &'a mut TextEngine, media: &'a mut MediaStore) -> Self {
-        Self { text, media }
+        Self {
+            text,
+            media,
+            inline_shadows: true,
+        }
     }
 
     pub fn paint(&mut self, sticker_scene: &StickerScene, canvas: &mut Scene) {
@@ -60,10 +67,11 @@ impl<'a> Painter<'a> {
         self.paint_node(node, Affine::IDENTITY, None, canvas);
     }
 
-    /// Paint only text nodes whose CSS `--glow` matches `radius` into a glow
-    /// mask. Boxes, borders and media are intentionally skipped so the glow
-    /// never leaks onto panels.
-    pub fn paint_glow(
+    /// Paint CSS text shadows with the requested blur radius into the GPU
+    /// shadow mask. Each shadow is a single glyph copy; the blur is done by
+    /// the offscreen filter pass, unlike the sampled fallback used when no
+    /// video compositor is available.
+    pub fn paint_gpu_shadows(
         &mut self,
         sticker_scene: &StickerScene,
         canvas: &mut Scene,
@@ -74,11 +82,11 @@ impl<'a> Painter<'a> {
         indices.sort_by_key(|index| sticker_scene.roots[*index].z_index);
         let transform = Affine::scale(scale);
         for index in indices {
-            self.paint_glow_node(&sticker_scene.roots[index], transform, radius, canvas);
+            self.paint_shadow_node(&sticker_scene.roots[index], transform, radius, canvas);
         }
     }
 
-    fn paint_glow_node(
+    fn paint_shadow_node(
         &mut self,
         node: &Node,
         parent_visual: Affine,
@@ -107,15 +115,18 @@ impl<'a> Painter<'a> {
 
         match &node.kind {
             NodeKind::Text(_) => {
-                if node.glow_enabled() && (node.glow_radius() - radius).abs() < 0.25 {
-                    text_painter::paint_text_glow(node, &base, canvas, self.text);
+                for shadow in node.text_shadows() {
+                    let (_, _, blur) = node.shadow_metrics(shadow);
+                    if (blur - radius).abs() < 0.25 {
+                        text_painter::paint_text_shadow(node, &base, canvas, self.text, shadow);
+                    }
                 }
             }
             NodeKind::Container => {
                 let mut indices: Vec<usize> = (0..node.children.len()).collect();
                 indices.sort_by_key(|index| node.children[*index].z_index);
                 for index in indices {
-                    self.paint_glow_node(&node.children[index], children_visual, radius, canvas);
+                    self.paint_shadow_node(&node.children[index], children_visual, radius, canvas);
                 }
             }
             NodeKind::Media(_) => {}
@@ -163,7 +174,7 @@ impl<'a> Painter<'a> {
 
         match &node.kind {
             NodeKind::Text(_) => {
-                text_painter::paint_text(node, &base, canvas, self.text);
+                text_painter::paint_text(node, &base, canvas, self.text, self.inline_shadows);
             }
             NodeKind::Media(media) => {
                 media_painter::paint_media(node, media, &base, canvas, self.media);

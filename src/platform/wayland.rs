@@ -163,8 +163,7 @@ impl WaylandState {
             {
                 log::error!("glow render failed: {error:#}");
             }
-            if let Err(error) = gpu.render_composite(plan.video.as_ref(), self.runtime.glow_speed())
-            {
+            if let Err(error) = gpu.render_composite(plan.video.as_ref()) {
                 log::error!("video composite failed: {error:#}");
             }
         } else if plan.filtered {

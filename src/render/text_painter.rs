@@ -12,7 +12,13 @@ use crate::css::{Axis, Size};
 use crate::scene::Node;
 use crate::text::{ShapeRequest, TextEngine};
 
-pub fn paint_text(node: &Node, transform: &Affine, canvas: &mut Scene, engine: &mut TextEngine) {
+pub fn paint_text(
+    node: &Node,
+    transform: &Affine,
+    canvas: &mut Scene,
+    engine: &mut TextEngine,
+    inline_shadows: bool,
+) {
     let NodeKindText::Text(content) = NodeKindText::from(&node.kind) else {
         return;
     };
@@ -25,18 +31,21 @@ pub fn paint_text(node: &Node, transform: &Affine, canvas: &mut Scene, engine: &
     let origin = *transform * Affine::translate((content_x as f64, content_y as f64));
     let color = node.filter_color(node.text_color());
 
-    paint_text_shadows(node, &shaped, &origin, canvas);
+    if inline_shadows {
+        paint_text_shadows(node, &shaped, &origin, canvas);
+    }
     draw_shaped(canvas, &shaped, &origin, color);
     paint_decoration(node, &shaped, &origin, canvas);
 }
 
-/// Paint only the glyph fill for the CSS-driven glow mask. Shadows and text
-/// decoration are handled by the normal overlay pass.
-pub fn paint_text_glow(
+/// Draw one CSS text shadow as a plain glyph copy. The blur is applied later
+/// by the GPU filter pass, so this does not sample a glyph disk.
+pub fn paint_text_shadow(
     node: &Node,
     transform: &Affine,
     canvas: &mut Scene,
     engine: &mut TextEngine,
+    shadow: &crate::css::values::Shadow,
 ) {
     let NodeKindText::Text(content) = NodeKindText::from(&node.kind) else {
         return;
@@ -44,16 +53,16 @@ pub fn paint_text_glow(
     let Some(shaped) = shape(node, engine, &content.text) else {
         return;
     };
-    let color = crate::css::values::color::with_opacity(
-        node.filter_color(node.glow_color()),
-        node.glow_strength(),
-    );
-    if color.components[3] <= 0.0 {
-        return;
-    }
+    let (dx, dy, _) = node.shadow_metrics(shadow);
     let origin = *transform
-        * Affine::translate((node.layout.content_x as f64, node.layout.content_y as f64));
-    draw_shaped(canvas, &shaped, &origin, color);
+        * Affine::translate((
+            node.layout.content_x as f64 + dx as f64,
+            node.layout.content_y as f64 + dy as f64,
+        ));
+    let color = node.filter_color(shadow.color);
+    if color.components[3] > 0.0 {
+        draw_shaped(canvas, &shaped, &origin, color);
+    }
 }
 
 /// Approximate a Gaussian text shadow by sampling a small disk around the
