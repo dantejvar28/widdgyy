@@ -30,6 +30,32 @@ pub fn paint_text(node: &Node, transform: &Affine, canvas: &mut Scene, engine: &
     paint_decoration(node, &shaped, &origin, canvas);
 }
 
+/// Paint only the glyph fill for the CSS-driven glow mask. Shadows and text
+/// decoration are handled by the normal overlay pass.
+pub fn paint_text_glow(
+    node: &Node,
+    transform: &Affine,
+    canvas: &mut Scene,
+    engine: &mut TextEngine,
+) {
+    let NodeKindText::Text(content) = NodeKindText::from(&node.kind) else {
+        return;
+    };
+    let Some(shaped) = shape(node, engine, &content.text) else {
+        return;
+    };
+    let color = crate::css::values::color::with_opacity(
+        node.filter_color(node.glow_color()),
+        node.glow_strength(),
+    );
+    if color.components[3] <= 0.0 {
+        return;
+    }
+    let origin = *transform
+        * Affine::translate((node.layout.content_x as f64, node.layout.content_y as f64));
+    draw_shaped(canvas, &shaped, &origin, color);
+}
+
 /// Approximate a Gaussian text shadow by sampling a small disk around the
 /// shadow offset. Vello has no arbitrary glyph blur, so a handful of low-alpha
 /// glyph passes at increasing radii produces a much softer result than a single

@@ -37,9 +37,6 @@ impl ConfigLoader {
             .context("config must contain a `stickers` array")?;
 
         let mut scene = Scene::new(viewport);
-        if let Some(glow) = value.get("glow") {
-            scene.glow = parse_glow(glow)?;
-        }
         for sticker in stickers {
             scene.roots.push(self.build_node(sticker)?);
         }
@@ -417,37 +414,6 @@ fn media_kind(path: &Path) -> MediaKind {
     }
 }
 
-fn parse_glow(value: &Value) -> Result<crate::scene::OverlayGlow> {
-    let object = value.as_object().context("`glow` must be an object")?;
-    let number = |key: &str| -> Result<Option<f32>> {
-        object
-            .get(key)
-            .map(|value| {
-                value
-                    .as_f64()
-                    .map(|number| number as f32)
-                    .with_context(|| format!("glow.{key} must be a number"))
-            })
-            .transpose()
-    };
-    let mut glow = crate::scene::OverlayGlow::default();
-    if let Some(enabled) = object.get("enabled") {
-        glow.enabled = enabled
-            .as_bool()
-            .context("glow.enabled must be a boolean")?;
-    }
-    if let Some(strength) = number("strength")? {
-        glow.strength = strength.clamp(0.0, 4.0);
-    }
-    if let Some(radius) = number("radius")? {
-        glow.radius = radius.clamp(0.0, 64.0);
-    }
-    if let Some(speed) = number("speed")? {
-        glow.speed = speed.clamp(0.0, 30.0);
-    }
-    Ok(glow)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,21 +429,6 @@ mod tests {
             expand_vars("${WIDDGYY_TEST_ROOT}/file.png"),
             "/tmp/example/file.png"
         );
-    }
-
-    #[test]
-    fn parses_glow_settings() {
-        let value: Value =
-            json5::from_str(r#"{ enabled: true, strength: 1.4, radius: 16, speed: 3, extra: 1 }"#)
-                .unwrap();
-        let glow = parse_glow(&value).unwrap();
-        assert!(glow.enabled);
-        assert!((glow.strength - 1.4).abs() < f32::EPSILON);
-        assert!((glow.radius - 16.0).abs() < f32::EPSILON);
-        assert!((glow.speed - 3.0).abs() < f32::EPSILON);
-
-        let defaults = parse_glow(&json5::from_str("{}").unwrap()).unwrap();
-        assert!(!defaults.enabled);
     }
 
     #[test]

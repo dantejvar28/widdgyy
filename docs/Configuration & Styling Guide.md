@@ -19,16 +19,10 @@ mkdir -p ~/.config/widdgyy
 
 ## Config structure
 
-`config.jsonc` is JSON5, so comments and trailing commas are allowed. The top-level object must contain a `stickers` array and may contain an optional `glow` object.
+`config.jsonc` is JSON5, so comments and trailing commas are allowed. The top-level object must contain a `stickers` array.
 
 ```jsonc
 {
-  "glow": {
-    "enabled": true,
-    "strength": 1.1,
-    "radius": 12,
-    "speed": 2.0
-  },
   "stickers": [
     {
       "type": "text",
@@ -42,18 +36,35 @@ mkdir -p ~/.config/widdgyy
 }
 ```
 
-### Animated overlay glow
+### Animated text glow (CSS)
 
-`glow` adds a pulsing halo around bright, neutral text without re-rasterizing it every frame, so video playback stays smooth. Dark panel fills and saturated borders (for example yellow accents) are excluded, so the panel itself does not glow.
+Text glow is configured in `styles.css` with custom properties. Only elements that opt in with `--glow` are rendered into the glow layer, so panels, borders and other elements stay untouched.
 
-| Field | Default | Description |
+```css
+* {
+  --glow-radius: 14px;   /* blur radius, 0–64px */
+  --glow-speed: 2;       /* pulse speed in radians per second */
+}
+
+.clock,
+.weather {
+  --glow: 1;             /* enables the glow for this text */
+  --glow-color: #c9a8ff; /* halo colour; defaults to the text colour */
+  --glow-strength: 1.3;  /* per-element intensity, 0–4 */
+}
+```
+
+| Property | Default | Description |
 | --- | --- | --- |
-| `enabled` | `false` | Turns the effect on |
-| `strength` | `0.9` | Halo intensity, `0`–`4` |
-| `radius` | `9` | Halo radius in pixels, `0`–`64` |
-| `speed` | `2.0` | Pulse speed in radians per second |
+| `--glow` | off | Any value except `0`, `none`, `false` or `off` enables it |
+| `--glow-color` | text colour | Halo colour |
+| `--glow-radius` | `12px` | Blur radius, `0`–`64` |
+| `--glow-strength` | `1` | Intensity, `0`–`4`; each element keeps its own value |
+| `--glow-speed` | `2` | Pulse speed in radians per second (shared by the largest value) |
 
-The glow is composited by the video path; it applies when a video wallpaper is active. For non-video scenes the CSS `text-shadow` fallback is used.
+The glow mask is rasterized with Vello, blurred on the GPU, and added by the video compositor, so it does not re-rasterize glyphs every frame. It applies while a video wallpaper is active; without video the CSS `text-shadow` / `animation` path is used.
+
+Multiple radii are supported: each distinct `--glow-radius` gets its own offscreen layer. Very large radii or many distinct radii cost more GPU work.
 
 Every sticker supports:
 

@@ -28,7 +28,8 @@ use crate::css::{Axis, Overflow, Stylesheet, Viewport, Visibility};
 use crate::layout::LayoutEngine;
 use crate::render::media_painter::media_draw_rect;
 use crate::render::{
-    FilterLayer, MediaStore, Painter, VideoFrame, has_spatial_filter, root_spatial_filter,
+    FilterLayer, GlowLayer, MediaStore, Painter, VideoFrame, has_spatial_filter,
+    root_spatial_filter,
 };
 use crate::scene::{MediaKind, Node, NodeKind, Scene};
 use crate::text::TextEngine;
@@ -44,6 +45,8 @@ pub struct Runtime {
     pub api: ApiManager,
     canvas: VelloScene,
     layers: Vec<FilterLayer>,
+    glow_layers: Vec<GlowLayer>,
+    glow_speed: f32,
     viewport: Viewport,
     last_tick: Instant,
     pending_reload: Option<Instant>,
@@ -95,6 +98,8 @@ impl Runtime {
             api: ApiManager::new(),
             canvas: VelloScene::new(),
             layers: Vec::new(),
+            glow_layers: Vec::new(),
+            glow_speed: 2.0,
             viewport,
             last_tick: Instant::now(),
             pending_reload: None,
@@ -119,8 +124,12 @@ impl Runtime {
         self.viewport
     }
 
-    pub fn glow(&self) -> crate::scene::OverlayGlow {
-        self.scene.glow
+    pub fn glow_layers(&self) -> &[GlowLayer] {
+        &self.glow_layers
+    }
+
+    pub fn glow_speed(&self) -> f32 {
+        self.glow_speed
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -251,6 +260,7 @@ impl Runtime {
         let (animations, active) = animation::prepare_scene(&mut self.scene, &self.stylesheet, now);
         self.animations = animations;
         self.animations_active = active;
+        self.rebuild_glow();
         self.layers.clear();
         self.overlay_dirty = true;
         self.fast_mode = false;
@@ -312,6 +322,41 @@ impl Runtime {
         );
     }
 
+    /// Rebuild the glow masks after a style, layout or content change. Text
+    /// nodes are grouped by `--glow-radius` so each blur radius only needs one
+    /// offscreen pass.
+    fn rebuild_glow(&mut self) {
+        self.glow_layers.clear();
+        let mut radii: Vec<f32> = Vec::new();
+        let mut speed = 0.0_f32;
+        let mut found = false;
+
+        fn visit(node: &Node, radii: &mut Vec<f32>, speed: &mut f32, found: &mut bool) {
+            if node.glow_enabled() && matches!(node.kind, NodeKind::Text(_)) {
+                let radius = node.glow_radius();
+                if !radii.iter().any(|value| (*value - radius).abs() < 0.25) {
+                    radii.push(radius);
+                }
+                *speed = speed.max(node.glow_speed());
+                *found = true;
+            }
+            for child in &node.children {
+                visit(child, radii, speed, found);
+            }
+        }
+        for root in &self.scene.roots {
+            visit(root, &mut radii, &mut speed, &mut found);
+        }
+        self.glow_speed = if found { speed } else { 2.0 };
+
+        for radius in radii {
+            let mut scene = VelloScene::new();
+            let mut painter = Painter::new(&mut self.text, &mut self.media);
+            painter.paint_glow(&self.scene, &mut scene, radius);
+            self.glow_layers.push(GlowLayer { scene, radius });
+        }
+    }
+
     /// Prepare the next frame. Fast path videos are drawn as a single wgpu
     /// texture; the Vello overlay is only re-rendered when its content changes.
     pub fn prepare_frame(&mut self) -> FramePlan {
@@ -349,6 +394,7 @@ impl Runtime {
             }
             let overlay_updated = self.overlay_dirty;
             if overlay_updated {
+                self.rebuild_glow();
                 self.canvas.reset();
                 self.clear_canvas();
                 let mut painter = Painter::new(&mut self.text, &mut self.media);

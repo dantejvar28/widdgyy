@@ -41,6 +41,7 @@ pub struct Compositor {
     overlay_pipeline: RenderPipeline,
     glow_buffer: Buffer,
     glow_start: std::time::Instant,
+    glow_view: TextureView,
     overlay_view: TextureView,
     overlay_bind_group: BindGroup,
     video_y_texture: Option<Texture>,
@@ -86,6 +87,16 @@ impl Compositor {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
                             min_binding_size: wgpu::BufferSize::new(16),
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: ShaderStages::FRAGMENT,
+                        ty: BindingType::Texture {
+                            sample_type: TextureSampleType::Float { filterable: true },
+                            view_dimension: TextureViewDimension::D2,
+                            multisampled: false,
                         },
                         count: None,
                     },
@@ -179,10 +190,12 @@ impl Compositor {
             mapped_at_creation: false,
         });
         let (_overlay_texture, overlay_view) = create_overlay_texture(device, width, height);
+        let (_glow_texture, glow_view) = create_glow_texture(device, width, height);
         let overlay_bind_group = create_overlay_bind_group(
             device,
             &overlay_bind_group_layout,
             &overlay_view,
+            &glow_view,
             &sampler,
             &glow_buffer,
         );
@@ -197,6 +210,7 @@ impl Compositor {
             overlay_pipeline,
             glow_buffer,
             glow_start: std::time::Instant::now(),
+            glow_view,
             overlay_view,
             overlay_bind_group,
             video_y_texture: None,
@@ -213,10 +227,13 @@ impl Compositor {
         self.height = height;
         let (_texture, view) = create_overlay_texture(device, width, height);
         self.overlay_view = view;
+        let (_glow_texture, glow_view) = create_glow_texture(device, width, height);
+        self.glow_view = glow_view;
         self.overlay_bind_group = create_overlay_bind_group(
             device,
             &self.overlay_bind_group_layout,
             &self.overlay_view,
+            &self.glow_view,
             &self.sampler,
             &self.glow_buffer,
         );
@@ -226,6 +243,36 @@ impl Compositor {
         &self.overlay_view
     }
 
+    pub fn glow_view(&self) -> &TextureView {
+        &self.glow_view
+    }
+
+    /// Clear the pre-blurred glow layer before it is rebuilt.
+    pub fn clear_glow(&self, device: &Device, queue: &Queue) {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("widdgyy clear glow"),
+        });
+        {
+            let _pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("widdgyy clear glow pass"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &self.glow_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+        }
+        queue.submit(Some(encoder.finish()));
+    }
+
     pub fn encode(
         &mut self,
         device: &Device,
@@ -233,17 +280,16 @@ impl Compositor {
         encoder: &mut CommandEncoder,
         target: &TextureView,
         video: Option<&VideoFrame>,
-        glow: crate::scene::OverlayGlow,
+        glow_speed: f32,
     ) {
         if let Some(video) = video {
             self.upload_video(device, queue, video);
         }
-        let strength = if glow.enabled { glow.strength } else { 0.0 };
         let params = [
             self.glow_start.elapsed().as_secs_f32(),
-            strength,
-            glow.radius,
-            glow.speed,
+            glow_speed.max(0.0),
+            0.0,
+            0.0,
         ];
         queue.write_buffer(&self.glow_buffer, 0, &f32_bytes(&params));
 
@@ -405,6 +451,25 @@ fn make_pipeline(
     })
 }
 
+fn create_glow_texture(device: &Device, width: u32, height: u32) -> (Texture, TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("widdgyy glow target"),
+        size: Extent3d {
+            width: width.max(1),
+            height: height.max(1),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: TextureFormat::Rgba8Unorm,
+        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&TextureViewDescriptor::default());
+    (texture, view)
+}
+
 fn create_overlay_texture(device: &Device, width: u32, height: u32) -> (Texture, TextureView) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("widdgyy overlay target"),
@@ -451,6 +516,7 @@ fn create_overlay_bind_group(
     device: &Device,
     layout: &BindGroupLayout,
     view: &TextureView,
+    glow_view: &TextureView,
     sampler: &Sampler,
     glow: &Buffer,
 ) -> BindGroup {
@@ -469,6 +535,10 @@ fn create_overlay_bind_group(
             BindGroupEntry {
                 binding: 2,
                 resource: glow.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 3,
+                resource: BindingResource::TextureView(glow_view),
             },
         ],
     })

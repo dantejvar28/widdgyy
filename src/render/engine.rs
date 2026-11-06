@@ -16,8 +16,9 @@ use wgpu::{
     Texture, TextureFormat, TextureUsages, TextureView,
 };
 
+use super::GlowLayer;
 use super::compositor::{Compositor, VideoFrame};
-use super::filter::{FilterCompositor, FilterLayer};
+use super::filter::{FilterCompositor, FilterLayer, SpatialFilter};
 
 pub struct GpuRenderer {
     pub device: Device,
@@ -170,12 +171,51 @@ impl GpuRenderer {
             .context("Vello overlay rasterization")
     }
 
+    /// Rasterize the CSS glow masks and blur them into the compositor texture.
+    /// Each layer carries its own radius, so `--glow-radius` can differ between
+    /// text elements.
+    pub fn render_glow(&mut self, layers: &[GlowLayer]) -> Result<()> {
+        if layers.is_empty() {
+            self.compositor.clear_glow(&self.device, &self.queue);
+            return Ok(());
+        }
+        for (index, layer) in layers.iter().enumerate() {
+            let params = RenderParams {
+                base_color: Color::new([0.0, 0.0, 0.0, 0.0]),
+                width: self.width,
+                height: self.height,
+                antialiasing_method: AaConfig::Area,
+            };
+            self.vello
+                .render_to_texture(
+                    &self.device,
+                    &self.queue,
+                    &layer.scene,
+                    self.filter.layer_view(),
+                    &params,
+                )
+                .context("Vello glow rasterization")?;
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("widdgyy glow blur"),
+                });
+            self.filter.encode_layer(
+                &self.queue,
+                &mut encoder,
+                self.compositor.glow_view(),
+                Some(SpatialFilter::Blur {
+                    radius: layer.radius,
+                }),
+                index == 0,
+            );
+            self.queue.submit(Some(encoder.finish()));
+        }
+        Ok(())
+    }
+
     /// Composite the newest video frame and the cached overlay to the surface.
-    pub fn render_composite(
-        &mut self,
-        video: Option<&VideoFrame>,
-        glow: crate::scene::OverlayGlow,
-    ) -> Result<()> {
+    pub fn render_composite(&mut self, video: Option<&VideoFrame>, glow_speed: f32) -> Result<()> {
         let Some(frame) = self.acquire_surface() else {
             return Ok(());
         };
@@ -187,8 +227,14 @@ impl GpuRenderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("widdgyy composite"),
             });
-        self.compositor
-            .encode(&self.device, &self.queue, &mut encoder, &view, video, glow);
+        self.compositor.encode(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &view,
+            video,
+            glow_speed,
+        );
         self.queue.submit(Some(encoder.finish()));
         self.queue.present(frame);
         Ok(())

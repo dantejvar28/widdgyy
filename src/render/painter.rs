@@ -60,6 +60,66 @@ impl<'a> Painter<'a> {
         self.paint_node(node, Affine::IDENTITY, None, canvas);
     }
 
+    /// Paint only text nodes whose CSS `--glow` matches `radius` into a glow
+    /// mask. Boxes, borders and media are intentionally skipped so the glow
+    /// never leaks onto panels.
+    pub fn paint_glow(&mut self, sticker_scene: &StickerScene, canvas: &mut Scene, radius: f32) {
+        let mut indices: Vec<usize> = (0..sticker_scene.roots.len()).collect();
+        indices.sort_by_key(|index| sticker_scene.roots[*index].z_index);
+        for index in indices {
+            self.paint_glow_node(
+                &sticker_scene.roots[index],
+                Affine::IDENTITY,
+                radius,
+                canvas,
+            );
+        }
+    }
+
+    fn paint_glow_node(
+        &mut self,
+        node: &Node,
+        parent_visual: Affine,
+        radius: f32,
+        canvas: &mut Scene,
+    ) {
+        if !node.visible || node.style.display == crate::css::Display::None {
+            return;
+        }
+        let width = node.layout.width.max(0.0);
+        let height = node.layout.height.max(0.0);
+        if width <= 0.0 || height <= 0.0 {
+            return;
+        }
+
+        let context = node
+            .style
+            .resolve_context(crate::css::Viewport::default(), width, height);
+        let local = effects_painter::node_transform(node, &context);
+        let translate = Affine::translate((node.absolute_x as f64, node.absolute_y as f64));
+        let base = parent_visual * translate * local;
+        let children_visual = parent_visual
+            * translate
+            * local
+            * Affine::translate((-node.absolute_x as f64, -node.absolute_y as f64));
+
+        match &node.kind {
+            NodeKind::Text(_) => {
+                if node.glow_enabled() && (node.glow_radius() - radius).abs() < 0.25 {
+                    text_painter::paint_text_glow(node, &base, canvas, self.text);
+                }
+            }
+            NodeKind::Container => {
+                let mut indices: Vec<usize> = (0..node.children.len()).collect();
+                indices.sort_by_key(|index| node.children[*index].z_index);
+                for index in indices {
+                    self.paint_glow_node(&node.children[index], children_visual, radius, canvas);
+                }
+            }
+            NodeKind::Media(_) => {}
+        }
+    }
+
     fn paint_node(
         &mut self,
         node: &Node,
