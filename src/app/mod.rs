@@ -17,7 +17,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use vello::Scene as VelloScene;
-use vello::peniko::Mix;
+use vello::kurbo::{Affine, Rect};
+use vello::peniko::{Color, Fill, Mix};
 
 use crate::animation::{self, AnimationSet};
 use crate::api::ApiManager;
@@ -116,6 +117,10 @@ impl Runtime {
 
     pub fn viewport(&self) -> Viewport {
         self.viewport
+    }
+
+    pub fn glow(&self) -> crate::scene::OverlayGlow {
+        self.scene.glow
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -285,6 +290,28 @@ impl Runtime {
         self.dirty
     }
 
+    /// Encode a full-viewport transparent rect so Vello processes every tile.
+    /// Its fine rasterizer starts each pixel from `base_color` (transparent)
+    /// and writes whole tiles, so this clears stale overlay content without a
+    /// separate clear pass, which is unreliable with Vello's storage texture.
+    fn clear_canvas(&mut self) {
+        let rect = Rect::new(
+            0.0,
+            0.0,
+            self.viewport.width as f64,
+            self.viewport.height as f64,
+        );
+        self.canvas.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            // A non-zero alpha keeps Vello from culling the rect: every tile
+            // must be processed so stale glyphs are overwritten.
+            Color::new([0.0, 0.0, 0.0, 1.0 / 255.0]),
+            None,
+            &rect,
+        );
+    }
+
     /// Prepare the next frame. Fast path videos are drawn as a single wgpu
     /// texture; the Vello overlay is only re-rendered when its content changes.
     pub fn prepare_frame(&mut self) -> FramePlan {
@@ -323,6 +350,7 @@ impl Runtime {
             let overlay_updated = self.overlay_dirty;
             if overlay_updated {
                 self.canvas.reset();
+                self.clear_canvas();
                 let mut painter = Painter::new(&mut self.text, &mut self.media);
                 painter.paint_filtered(&self.scene, &mut self.canvas, Some(uid));
                 self.overlay_dirty = false;
@@ -349,6 +377,7 @@ impl Runtime {
 
     fn prepare_full(&mut self, has_filtered_root: bool) -> FramePlan {
         self.canvas.reset();
+        self.clear_canvas();
 
         if !has_filtered_root {
             let mut painter = Painter::new(&mut self.text, &mut self.media);

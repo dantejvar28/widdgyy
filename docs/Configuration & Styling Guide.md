@@ -19,10 +19,16 @@ mkdir -p ~/.config/widdgyy
 
 ## Config structure
 
-`config.jsonc` is JSON5, so comments and trailing commas are allowed. The top-level object must contain a `stickers` array.
+`config.jsonc` is JSON5, so comments and trailing commas are allowed. The top-level object must contain a `stickers` array and may contain an optional `glow` object.
 
 ```jsonc
 {
+  "glow": {
+    "enabled": true,
+    "strength": 1.1,
+    "radius": 12,
+    "speed": 2.0
+  },
   "stickers": [
     {
       "type": "text",
@@ -35,6 +41,19 @@ mkdir -p ~/.config/widdgyy
   ]
 }
 ```
+
+### Animated overlay glow
+
+`glow` adds a pulsing halo around the text overlay without re-rasterizing it every frame, so video playback stays smooth.
+
+| Field | Default | Description |
+| --- | --- | --- |
+| `enabled` | `false` | Turns the effect on |
+| `strength` | `0.9` | Halo intensity, `0`–`4` |
+| `radius` | `9` | Halo radius in pixels, `0`–`64` |
+| `speed` | `2.0` | Pulse speed in radians per second |
+
+The glow is composited by the video path; it applies when a video wallpaper is active. For non-video scenes the CSS `text-shadow` fallback is used.
 
 Every sticker supports:
 
@@ -91,7 +110,7 @@ Supports `text`, `font_size`/`font-size`, `color`, margins and all common positi
 ```
 
 - `fields` maps template names to JSON paths such as `daily.time[0]` or `location.name`.
-- Inline filters are supported after `|`; currently `weekday_short` is available.
+- Inline filters are supported after `|`: `weekday_short` and `fixed_N` (fixed-point formatting, e.g. `price|fixed_2`).
 - Requests run on a worker thread; the UI never blocks. While a request is in flight no duplicate request is started.
 
 #### `media`
@@ -258,7 +277,7 @@ If a family exists but does not ship the exact weight/style (common for display 
 
 `blur()` and `drop-shadow()` work on root-level nodes through an offscreen layer. Nested spatial filters, `backdrop-filter`, masks and border-image are still pending.
 
-`text-shadow` blur is approximated with a sampled glyph disk (Vello has no arbitrary glyph blur). Larger blur radii visibly feather further; the pass count is capped for animated scenes.
+`text-shadow` blur is approximated with a compact sampled glyph halo (Vello has no arbitrary glyph blur). Large blur radii are intentionally capped to avoid readable offset copies of the glyphs; use the config-level `glow` for a wide animated halo.
 
 ### Flex
 
@@ -276,7 +295,7 @@ Explicit `grid-column`/`grid-row` placement is parsed, but the layout engine cur
 
 ### Animation and transitions
 
-`animation*` and `@keyframes` are applied at runtime for `transform`, `opacity`, `color` and `background-color`, including duration, delay, timing functions, direction, iteration count and fill mode. Multiple animations per node are supported.
+`animation*` and `@keyframes` are applied at runtime for `transform`, `opacity`, `color`, `background-color` and `text-shadow`, including duration, delay, timing functions, direction, iteration count and fill mode. Multiple animations per node are supported. Shadow lists of different lengths are interpolated by repeating the shorter list, matching CSS. Animating `text-shadow` re-rasterizes the text overlay every frame; prefer the config-level `glow` for a cheap continuous pulse.
 
 `transition*` is parsed but not wired to style changes yet. Layout-affecting animations (width/height/margin/padding) are also pending.
 

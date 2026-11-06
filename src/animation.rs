@@ -18,7 +18,7 @@ use crate::css::properties::Declarations;
 use crate::css::properties::transition::{
     Animation, AnimationDirection, AnimationFillMode, PlayState,
 };
-use crate::css::values::{self, Length, TransformOp};
+use crate::css::values::{self, Length, Shadow, TransformOp};
 use crate::scene::{AnimatedStyle, Node};
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -27,6 +27,7 @@ struct FrameValues {
     transform: Option<Vec<TransformOp>>,
     color: Option<Color>,
     background_color: Option<Color>,
+    text_shadows: Option<Vec<Shadow>>,
 }
 
 #[derive(Clone, Debug)]
@@ -41,6 +42,7 @@ struct BaseValues {
     transform: Vec<TransformOp>,
     color: Color,
     background_color: Color,
+    text_shadows: Vec<Shadow>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -49,6 +51,7 @@ struct FrameFields {
     transform: bool,
     color: bool,
     background_color: bool,
+    text_shadows: bool,
 }
 
 struct CompiledAnimation {
@@ -79,6 +82,7 @@ impl AnimationSet {
             transform: style.effects.transform.clone(),
             color: style.text.color,
             background_color: style.background.color,
+            text_shadows: style.text.shadows.clone(),
         };
         let mut animations = Vec::new();
         let mut infinite = false;
@@ -103,6 +107,7 @@ impl AnimationSet {
                         transform: declarations.transform,
                         color: declarations.color,
                         background_color: declarations.background_color,
+                        text_shadows: declarations.text_shadow,
                     },
                 });
             }
@@ -138,6 +143,9 @@ impl AnimationSet {
                 background_color: frames
                     .iter()
                     .any(|frame| frame.values.background_color.is_some()),
+                text_shadows: frames
+                    .iter()
+                    .any(|frame| frame.values.text_shadows.is_some()),
             };
             animations.push(CompiledAnimation {
                 animation: animation.clone(),
@@ -273,6 +281,10 @@ fn sample_at(compiled: &CompiledAnimation, progress: f32, base: &BaseValues) -> 
         },
         color: lerp_option_color(a.color, b.color, easing),
         background_color: lerp_option_color(a.background_color, b.background_color, easing),
+        text_shadows: match (&a.text_shadows, &b.text_shadows) {
+            (Some(a), Some(b)) => lerp_shadows(a, b, easing),
+            _ => a.text_shadows.or(b.text_shadows),
+        },
     }
 }
 
@@ -297,6 +309,13 @@ fn resolve_frame(frame: &CompiledFrame, base: &BaseValues, fields: FrameFields) 
                 .background_color
                 .unwrap_or(base.background_color)
         }),
+        text_shadows: fields.text_shadows.then(|| {
+            frame
+                .values
+                .text_shadows
+                .clone()
+                .unwrap_or_else(|| base.text_shadows.clone())
+        }),
     }
 }
 
@@ -312,6 +331,9 @@ fn apply_values(target: &mut AnimatedStyle, values: &FrameValues) {
     }
     if let Some(color) = values.background_color {
         target.background_color = Some(color);
+    }
+    if let Some(shadows) = &values.text_shadows {
+        target.text_shadows = Some(shadows.clone());
     }
 }
 
@@ -345,6 +367,31 @@ fn lerp_length(a: &Length, b: &Length, t: f32) -> Length {
                 + b.resolve(&Default::default(), values::Axis::Horizontal) * t,
         ),
     }
+}
+
+fn lerp_shadows(a: &[Shadow], b: &[Shadow], t: f32) -> Option<Vec<Shadow>> {
+    if a.is_empty() || b.is_empty() {
+        return None;
+    }
+    // CSS repeats the shorter shadow list when lengths differ. This is what
+    // makes a single soft shadow animate smoothly into a three-layer glow.
+    let length = a.len().max(b.len());
+    Some(
+        (0..length)
+            .map(|index| {
+                let a = &a[index % a.len()];
+                let b = &b[index % b.len()];
+                Shadow {
+                    offset_x: lerp_length(&a.offset_x, &b.offset_x, t),
+                    offset_y: lerp_length(&a.offset_y, &b.offset_y, t),
+                    blur: lerp_length(&a.blur, &b.blur, t),
+                    spread: lerp_length(&a.spread, &b.spread, t),
+                    color: values::color::mix(a.color, b.color, t),
+                    inset: if t < 0.5 { a.inset } else { b.inset },
+                }
+            })
+            .collect(),
+    )
 }
 
 fn lerp_transforms(a: &[TransformOp], b: &[TransformOp], t: f32) -> Option<Vec<TransformOp>> {

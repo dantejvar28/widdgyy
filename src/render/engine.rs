@@ -171,7 +171,11 @@ impl GpuRenderer {
     }
 
     /// Composite the newest video frame and the cached overlay to the surface.
-    pub fn render_composite(&mut self, video: Option<&VideoFrame>) -> Result<()> {
+    pub fn render_composite(
+        &mut self,
+        video: Option<&VideoFrame>,
+        glow: crate::scene::OverlayGlow,
+    ) -> Result<()> {
         let Some(frame) = self.acquire_surface() else {
             return Ok(());
         };
@@ -184,7 +188,7 @@ impl GpuRenderer {
                 label: Some("widdgyy composite"),
             });
         self.compositor
-            .encode(&self.device, &self.queue, &mut encoder, &view, video);
+            .encode(&self.device, &self.queue, &mut encoder, &view, video, glow);
         self.queue.submit(Some(encoder.finish()));
         self.queue.present(frame);
         Ok(())

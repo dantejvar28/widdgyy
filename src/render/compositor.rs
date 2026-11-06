@@ -15,7 +15,7 @@ use std::sync::Arc;
 use crate::media::VideoFrameData;
 use wgpu::{
     BindGroup, BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BindingType,
-    BlendComponent, BlendFactor, BlendOperation, BlendState, ColorTargetState, ColorWrites,
+    BlendComponent, BlendFactor, BlendOperation, BlendState, Buffer, ColorTargetState, ColorWrites,
     CommandEncoder, Device, Extent3d, FragmentState, MultisampleState, PipelineLayoutDescriptor,
     PrimitiveState, Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
     RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor,
@@ -39,6 +39,8 @@ pub struct Compositor {
     sampler: Sampler,
     video_pipeline: RenderPipeline,
     overlay_pipeline: RenderPipeline,
+    glow_buffer: Buffer,
+    glow_start: std::time::Instant,
     overlay_view: TextureView,
     overlay_bind_group: BindGroup,
     video_y_texture: Option<Texture>,
@@ -75,6 +77,16 @@ impl Compositor {
                         binding: 1,
                         visibility: ShaderStages::FRAGMENT,
                         ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: ShaderStages::FRAGMENT,
+                        ty: BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(16),
+                        },
                         count: None,
                     },
                 ],
@@ -160,9 +172,20 @@ impl Compositor {
             ..Default::default()
         });
 
+        let glow_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("widdgyy glow uniform"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let (_overlay_texture, overlay_view) = create_overlay_texture(device, width, height);
-        let overlay_bind_group =
-            create_overlay_bind_group(device, &overlay_bind_group_layout, &overlay_view, &sampler);
+        let overlay_bind_group = create_overlay_bind_group(
+            device,
+            &overlay_bind_group_layout,
+            &overlay_view,
+            &sampler,
+            &glow_buffer,
+        );
 
         Self {
             width,
@@ -172,6 +195,8 @@ impl Compositor {
             sampler,
             video_pipeline,
             overlay_pipeline,
+            glow_buffer,
+            glow_start: std::time::Instant::now(),
             overlay_view,
             overlay_bind_group,
             video_y_texture: None,
@@ -193,6 +218,7 @@ impl Compositor {
             &self.overlay_bind_group_layout,
             &self.overlay_view,
             &self.sampler,
+            &self.glow_buffer,
         );
     }
 
@@ -207,10 +233,19 @@ impl Compositor {
         encoder: &mut CommandEncoder,
         target: &TextureView,
         video: Option<&VideoFrame>,
+        glow: crate::scene::OverlayGlow,
     ) {
         if let Some(video) = video {
             self.upload_video(device, queue, video);
         }
+        let strength = if glow.enabled { glow.strength } else { 0.0 };
+        let params = [
+            self.glow_start.elapsed().as_secs_f32(),
+            strength,
+            glow.radius,
+            glow.speed,
+        ];
+        queue.write_buffer(&self.glow_buffer, 0, &f32_bytes(&params));
 
         let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("widdgyy composite"),
@@ -417,6 +452,7 @@ fn create_overlay_bind_group(
     layout: &BindGroupLayout,
     view: &TextureView,
     sampler: &Sampler,
+    glow: &Buffer,
 ) -> BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("widdgyy overlay bind group"),
@@ -430,8 +466,20 @@ fn create_overlay_bind_group(
                 binding: 1,
                 resource: BindingResource::Sampler(sampler),
             },
+            BindGroupEntry {
+                binding: 2,
+                resource: glow.as_entire_binding(),
+            },
         ],
     })
+}
+
+fn f32_bytes(values: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(values.len() * 4);
+    for value in values {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes
 }
 
 fn create_video_bind_group(

@@ -267,6 +267,18 @@ fn apply_filter(value: &Value, filter: &str) -> anyhow::Result<Value> {
             };
             Ok(Value::String(weekday))
         }
+        filter if filter.starts_with("fixed_") => {
+            let precision = filter[6..]
+                .parse::<usize>()
+                .map_err(|_| anyhow::anyhow!("fixed_N expects a numeric precision"))?;
+            if precision > 8 {
+                anyhow::bail!("fixed_N precision must be between 0 and 8");
+            }
+            let number = value
+                .as_f64()
+                .ok_or_else(|| anyhow::anyhow!("fixed_N expects a number"))?;
+            Ok(Value::String(format!("{number:.precision$}")))
+        }
         other => anyhow::bail!("unsupported field filter: {other}"),
     }
 }
@@ -274,6 +286,13 @@ fn apply_filter(value: &Value, filter: &str) -> anyhow::Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formats_fixed_decimal_fields() {
+        let data = serde_json::json!({"price": 7353.734, "change": -4.356});
+        assert_eq!(resolve_field(&data, "price|fixed_2").unwrap(), "7353.73");
+        assert_eq!(resolve_field(&data, "change|fixed_2").unwrap(), "-4.36");
+    }
 
     #[test]
     fn extracts_nested_paths() {

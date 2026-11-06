@@ -158,7 +158,7 @@ impl WaylandState {
             {
                 log::error!("overlay render failed: {error:#}");
             }
-            if let Err(error) = gpu.render_composite(plan.video.as_ref()) {
+            if let Err(error) = gpu.render_composite(plan.video.as_ref(), self.runtime.glow()) {
                 log::error!("video composite failed: {error:#}");
             }
         } else if plan.filtered {

@@ -71,3 +71,31 @@ fn samples_colors() {
     let color = half.background_color.unwrap();
     assert!((color.components[0] - 0.5).abs() < 0.05, "{color:?}");
 }
+
+#[test]
+fn interpolates_text_shadow_glow() {
+    let css = Stylesheet::parse(
+        r#"
+        @keyframes glow {
+            from { text-shadow: 0 0 4px rgba(255,255,255,0.3), 0 0 10px rgba(150,80,255,0.2); }
+            50% { text-shadow: 0 0 12px rgba(255,255,255,1), 0 0 30px rgba(150,80,255,0.8); }
+            to { text-shadow: 0 0 4px rgba(255,255,255,0.3), 0 0 10px rgba(150,80,255,0.2); }
+        }
+        .glow { animation: glow 2s ease-in-out infinite; }
+        "#,
+    );
+    let mut scene = Scene::new(Viewport::default());
+    scene
+        .roots
+        .push(Node::text("text", vec!["glow".to_string()], "Glow"));
+    scene.resolve_styles(&css);
+    let start = Instant::now();
+    let (sets, active) = animation::prepare_scene(&mut scene, &css, start);
+    assert!(active);
+    let set = sets.values().next().expect("compiled glow animation");
+    let (mid, _) = set.sample(start + Duration::from_secs(1));
+    let shadows = mid.text_shadows.expect("animated text shadows");
+    assert_eq!(shadows.len(), 2);
+    assert!(matches!(shadows[0].blur, widdgyy::css::Length::Px(value) if value > 4.0));
+    assert!(shadows[0].color.components[3] > 0.3);
+}

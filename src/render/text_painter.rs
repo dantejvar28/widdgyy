@@ -45,7 +45,7 @@ fn paint_text_shadows(
         node.layout.width,
         node.layout.height,
     );
-    for shadow in &node.style.text.shadows {
+    for shadow in node.text_shadows() {
         let dx = shadow.offset_x.resolve(&context, Axis::Horizontal);
         let dy = shadow.offset_y.resolve(&context, Axis::Vertical);
         let blur = shadow.blur.resolve(&context, Axis::Horizontal).max(0.0);
@@ -57,38 +57,27 @@ fn paint_text_shadows(
             continue;
         }
 
-        // CSS blur radius is roughly two standard deviations. The sample disk
-        // uses the full radius so the shadow visibly feathers out.
-        let rings = ((blur / 6.0).ceil() as usize).clamp(1, 3);
-        let samples = 8usize;
-        let passes = rings * samples;
-        let scatter_alpha = base[3] * 0.55 / passes as f32;
-        let core_alpha = base[3] * 0.45;
-
-        let core = Affine::translate((dx as f64, dy as f64));
-        draw_shaped(
-            canvas,
-            shaped,
-            &(*origin * core),
-            vello::peniko::Color::new([base[0], base[1], base[2], core_alpha]),
-        );
-
-        for ring in 1..=rings {
-            let radius = blur * ring as f32 / rings as f32;
-            for sample in 0..samples {
-                let angle =
-                    std::f32::consts::TAU * sample as f32 / samples as f32 + ring as f32 * 0.35;
-                let offset = Affine::translate((
-                    (dx + angle.cos() * radius) as f64,
-                    (dy + angle.sin() * radius) as f64,
-                ));
-                draw_shaped(
-                    canvas,
-                    shaped,
-                    &(*origin * offset),
-                    vello::peniko::Color::new([base[0], base[1], base[2], scatter_alpha]),
-                );
-            }
+        // Sample the disk with a golden-angle spiral instead of concentric
+        // rings. Equal-area samples avoid visible duplicated glyph contours and
+        // read as a soft glow while keeping the draw count bounded.
+        let samples = 16usize;
+        // Glyphs are vector shapes, not a raster alpha mask. Keep the sampled
+        // halo close to the outline so it brightens the edge instead of making
+        // readable offset copies of the whole word.
+        let alpha = base[3] * 0.28 / samples as f32;
+        let radius = (blur * 0.15).clamp(0.5, 1.5);
+        for sample in 0..samples {
+            let angle = std::f32::consts::TAU * sample as f32 / samples as f32;
+            let offset = Affine::translate((
+                (dx + angle.cos() * radius) as f64,
+                (dy + angle.sin() * radius) as f64,
+            ));
+            draw_shaped(
+                canvas,
+                shaped,
+                &(*origin * offset),
+                vello::peniko::Color::new([base[0], base[1], base[2], alpha]),
+            );
         }
     }
 }

@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::css::parser::RawDeclaration;
 use crate::css::selector::Element;
-use crate::css::values::TransformOp;
+use crate::css::values::{Shadow, TransformOp};
 use crate::css::{Cascade, ComputedStyle, Viewport};
 use crate::layout::{LayoutBox, LayoutEngine};
 use vello::peniko::Color;
@@ -120,6 +120,7 @@ pub struct AnimatedStyle {
     pub transform: Option<Vec<TransformOp>>,
     pub color: Option<Color>,
     pub background_color: Option<Color>,
+    pub text_shadows: Option<Vec<Shadow>>,
 }
 
 #[derive(Clone, Debug)]
@@ -227,6 +228,13 @@ impl Node {
 
     pub fn text_color(&self) -> Color {
         self.animated.color.unwrap_or(self.style.text.color)
+    }
+
+    pub fn text_shadows(&self) -> &[Shadow] {
+        self.animated
+            .text_shadows
+            .as_deref()
+            .unwrap_or(&self.style.text.shadows)
     }
 
     pub fn background_color(&self) -> Color {
@@ -444,10 +452,32 @@ impl ElementDesc {
     }
 }
 
+/// Pulsing glow applied to the cached text overlay by the video compositor.
+/// Disabled by default so other configurations keep the plain overlay.
+#[derive(Clone, Copy, Debug)]
+pub struct OverlayGlow {
+    pub enabled: bool,
+    pub strength: f32,
+    pub radius: f32,
+    pub speed: f32,
+}
+
+impl Default for OverlayGlow {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            strength: 0.9,
+            radius: 9.0,
+            speed: 2.0,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Scene {
     pub roots: Vec<Node>,
     pub viewport: Viewport,
+    pub glow: OverlayGlow,
 }
 
 impl Scene {
@@ -455,6 +485,7 @@ impl Scene {
         Self {
             roots: Vec::new(),
             viewport,
+            glow: OverlayGlow::default(),
         }
     }
 
