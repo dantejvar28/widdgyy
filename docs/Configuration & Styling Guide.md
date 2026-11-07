@@ -52,11 +52,13 @@ mkdir -p ~/.config/widdgyy
 }
 ```
 
-- Multiple shadows, offsets, colours and blur radii are supported.
+- Multiple shadows, offsets, colours and blur radii are supported. The first shadow is painted on top, as in CSS.
 - Lists of different lengths repeat the shorter list, matching CSS.
-- The blur is a real GPU separable Gaussian applied to a glyph mask, not a set of sampled glyph copies.
-- Animating `text-shadow` refreshes the offscreen shadow texture; it does not repaint the text overlay.
-- On the video fast path, shadows are composited from their own texture. Without a video wallpaper the sampled fallback is used.
+- The blur sigma is half the blur radius, as in browsers.
+- The glyph coverage is rasterized once and only re-rendered when the text changes. Blur, offset and colour are applied on the GPU, so animating `text-shadow` does not re-rasterize text.
+- Shadows are blurred at half resolution and upscaled, which keeps the cost low without a visible loss.
+
+Limits on the video path, per frame: 16 shadows in total and 4 distinct blur radii. Radii beyond the fourth reuse the nearest one. Without a video wallpaper the simpler sampled fallback is used, and its blur is approximate.
 
 Every sticker supports:
 
@@ -280,7 +282,7 @@ If a family exists but does not ship the exact weight/style (common for display 
 
 `blur()` and `drop-shadow()` work on root-level nodes through an offscreen layer. Nested spatial filters, `backdrop-filter`, masks and border-image are still pending.
 
-On the video fast path `text-shadow` is rendered with a real GPU Gaussian blur. Without video the blur is approximated with a compact sampled glyph halo (Vello has no arbitrary glyph blur), capped to avoid readable offset copies.
+On the video path `text-shadow` is rendered with a real GPU Gaussian blur (see above). Without video the blur is approximated with a compact sampled glyph halo, because Vello has no arbitrary glyph blur.
 
 ### Flex
 

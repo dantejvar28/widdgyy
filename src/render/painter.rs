@@ -17,6 +17,7 @@ use vello::kurbo::Affine;
 use crate::scene::{Node, NodeKind, Scene as StickerScene};
 use crate::text::TextEngine;
 
+use super::ShadowDraw;
 use super::media::MediaStore;
 use super::{box_painter, effects_painter, media_painter, text_painter};
 
@@ -67,32 +68,23 @@ impl<'a> Painter<'a> {
         self.paint_node(node, Affine::IDENTITY, None, canvas);
     }
 
-    /// Paint CSS text shadows with the requested blur radius into the GPU
-    /// shadow mask. Each shadow is a single glyph copy; the blur is done by
-    /// the offscreen filter pass, unlike the sampled fallback used when no
-    /// video compositor is available.
-    pub fn paint_gpu_shadows(
+    /// Paint the glyph coverage of every text node that has a text-shadow.
+    /// The result is white and unshifted; the GPU shadow pass applies blur,
+    /// offset and colour per shadow.
+    pub fn paint_text_masks(
         &mut self,
         sticker_scene: &StickerScene,
         canvas: &mut Scene,
-        radius: f32,
         scale: f64,
     ) {
         let mut indices: Vec<usize> = (0..sticker_scene.roots.len()).collect();
         indices.sort_by_key(|index| sticker_scene.roots[*index].z_index);
-        let transform = Affine::scale(scale);
         for index in indices {
-            self.paint_shadow_node(&sticker_scene.roots[index], transform, radius, canvas);
+            self.paint_mask_node(&sticker_scene.roots[index], Affine::scale(scale), canvas);
         }
     }
 
-    fn paint_shadow_node(
-        &mut self,
-        node: &Node,
-        parent_visual: Affine,
-        radius: f32,
-        canvas: &mut Scene,
-    ) {
+    fn paint_mask_node(&mut self, node: &Node, parent_visual: Affine, canvas: &mut Scene) {
         if !node.visible || node.style.display == crate::css::Display::None {
             return;
         }
@@ -115,18 +107,15 @@ impl<'a> Painter<'a> {
 
         match &node.kind {
             NodeKind::Text(_) => {
-                for shadow in node.text_shadows() {
-                    let (_, _, blur) = node.shadow_metrics(shadow);
-                    if (blur - radius).abs() < 0.25 {
-                        text_painter::paint_text_shadow(node, &base, canvas, self.text, shadow);
-                    }
+                if !node.text_shadows().is_empty() {
+                    text_painter::paint_text_mask(node, &base, canvas, self.text);
                 }
             }
             NodeKind::Container => {
                 let mut indices: Vec<usize> = (0..node.children.len()).collect();
                 indices.sort_by_key(|index| node.children[*index].z_index);
                 for index in indices {
-                    self.paint_shadow_node(&node.children[index], children_visual, radius, canvas);
+                    self.paint_mask_node(&node.children[index], children_visual, canvas);
                 }
             }
             NodeKind::Media(_) => {}
@@ -189,5 +178,47 @@ impl<'a> Painter<'a> {
         }
 
         effects_painter::end_effects(layer, canvas);
+    }
+}
+
+/// Collect text shadows in paint order. Within one text node the last CSS
+/// shadow comes first, because CSS paints the first shadow on top.
+pub fn collect_shadow_draws(sticker_scene: &StickerScene) -> Vec<ShadowDraw> {
+    let mut draws = Vec::new();
+    let mut indices: Vec<usize> = (0..sticker_scene.roots.len()).collect();
+    indices.sort_by_key(|index| sticker_scene.roots[*index].z_index);
+    for index in indices {
+        collect_node_shadows(&sticker_scene.roots[index], &mut draws);
+    }
+    draws
+}
+
+fn collect_node_shadows(node: &Node, draws: &mut Vec<ShadowDraw>) {
+    if !node.visible || node.style.display == crate::css::Display::None {
+        return;
+    }
+    match &node.kind {
+        NodeKind::Text(_) => {
+            for shadow in node.text_shadows().iter().rev() {
+                let color = node.filter_color(shadow.color).components;
+                if color[3] <= 0.0 {
+                    continue;
+                }
+                let (dx, dy, blur) = node.shadow_metrics(shadow);
+                draws.push(ShadowDraw {
+                    sigma: blur * 0.5,
+                    offset: [dx, dy],
+                    color,
+                });
+            }
+        }
+        NodeKind::Container => {
+            let mut indices: Vec<usize> = (0..node.children.len()).collect();
+            indices.sort_by_key(|index| node.children[*index].z_index);
+            for index in indices {
+                collect_node_shadows(&node.children[index], draws);
+            }
+        }
+        NodeKind::Media(_) => {}
     }
 }

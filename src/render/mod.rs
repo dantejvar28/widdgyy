@@ -15,12 +15,13 @@ pub mod text_painter;
 
 pub use compositor::{Compositor, VideoFrame};
 
-/// One pre-rendered text-shadow layer. The scene contains shadow glyphs for a
-/// single blur radius; the compositor blurs it and composites it behind the
-/// crisp overlay text.
-pub struct GlowLayer {
-    pub scene: vello::Scene,
-    pub radius: f32,
+/// One CSS text shadow ready for the GPU: standard deviation of the blur,
+/// offset in pixels and straight-alpha colour.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShadowDraw {
+    pub sigma: f32,
+    pub offset: [f32; 2],
+    pub color: [f32; 4],
 }
 pub use engine::GpuRenderer;
 pub use filter::{FilterLayer, SpatialFilter, has_spatial_filter, root_spatial_filter};

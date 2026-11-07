@@ -28,12 +28,34 @@ use crate::css::{Axis, Overflow, Stylesheet, Viewport, Visibility};
 use crate::layout::LayoutEngine;
 use crate::render::media_painter::media_draw_rect;
 use crate::render::{
-    FilterLayer, GlowLayer, MediaStore, Painter, VideoFrame, has_spatial_filter,
+    FilterLayer, MediaStore, Painter, ShadowDraw, VideoFrame, has_spatial_filter,
     root_spatial_filter,
 };
 use crate::scene::{MediaKind, Node, NodeKind, Scene};
 use crate::text::TextEngine;
 use crate::user_config_dir;
+
+/// Shadow blur and shadow list refresh rate while animations are running.
+const SHADOW_INTERVAL: Duration = Duration::from_millis(16);
+
+/// Shadow masks are rasterized and blurred at half resolution. A blurred
+/// coverage is smooth, so upscaling it is invisible and costs a quarter of
+/// the full-resolution passes.
+pub const SHADOW_MASK_SCALE: f64 = 0.5;
+
+/// Fill a scene with a full-viewport transparent rect. Vello processes every
+/// tile when a shape covers it, which overwrites stale pixels from the last
+/// render. A non-zero alpha stops the rect from being culled as empty.
+fn clear_scene(scene: &mut VelloScene, viewport: Viewport, scale: f64) {
+    let rect = Rect::new(0.0, 0.0, viewport.width as f64, viewport.height as f64);
+    scene.fill(
+        Fill::NonZero,
+        Affine::scale(scale),
+        Color::new([0.0, 0.0, 0.0, 1.0 / 255.0]),
+        None,
+        &rect,
+    );
+}
 
 pub struct Runtime {
     pub config: ConfigLoader,
@@ -45,8 +67,9 @@ pub struct Runtime {
     pub api: ApiManager,
     canvas: VelloScene,
     layers: Vec<FilterLayer>,
-    glow_layers: Vec<GlowLayer>,
-    last_glow_build: Instant,
+    shadow_items: Vec<ShadowDraw>,
+    shadow_mask: VelloScene,
+    last_shadow_build: Instant,
     viewport: Viewport,
     last_tick: Instant,
     pending_reload: Option<Instant>,
@@ -56,7 +79,7 @@ pub struct Runtime {
     config_mtime: Option<std::time::SystemTime>,
     css_mtime: Option<std::time::SystemTime>,
     overlay_dirty: bool,
-    glow_dirty: bool,
+    shadows_dirty: bool,
     fast_mode: bool,
     animations: HashMap<u64, AnimationSet>,
     animations_active: bool,
@@ -68,7 +91,8 @@ pub struct Runtime {
 pub struct FramePlan {
     pub fast: bool,
     pub overlay_updated: bool,
-    pub glow_updated: bool,
+    /// True when the shadow blur and shadow list must be refreshed.
+    pub shadows_updated: bool,
     pub video: Option<VideoFrame>,
     /// True when `Runtime::render_layers()` must be used instead of the single
     /// cached overlay scene. Only set for the full (non-video) path.
@@ -101,8 +125,9 @@ impl Runtime {
             api: ApiManager::new(),
             canvas: VelloScene::new(),
             layers: Vec::new(),
-            glow_layers: Vec::new(),
-            last_glow_build: Instant::now() - Duration::from_secs(1),
+            shadow_items: Vec::new(),
+            shadow_mask: VelloScene::new(),
+            last_shadow_build: Instant::now() - Duration::from_secs(1),
             viewport,
             last_tick: Instant::now(),
             pending_reload: None,
@@ -112,7 +137,7 @@ impl Runtime {
             config_mtime,
             css_mtime,
             overlay_dirty: true,
-            glow_dirty: true,
+            shadows_dirty: true,
             fast_mode: false,
             animations: HashMap::new(),
             animations_active: false,
@@ -129,8 +154,15 @@ impl Runtime {
         self.viewport
     }
 
-    pub fn glow_layers(&self) -> &[GlowLayer] {
-        &self.glow_layers
+    /// Text shadows in paint order for the current frame.
+    pub fn shadow_items(&self) -> &[ShadowDraw] {
+        &self.shadow_items
+    }
+
+    /// Glyph coverage of all shadowed text. Re-rendered only when the text
+    /// changes, not when a shadow animates.
+    pub fn shadow_mask(&self) -> &VelloScene {
+        &self.shadow_mask
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -262,11 +294,11 @@ impl Runtime {
         self.animations = animations;
         self.animations_active = active;
         self.last_animation_sample = Instant::now() - Duration::from_secs(1);
-        self.rebuild_glow();
+        self.rebuild_shadows();
         self.layers.clear();
         self.overlay_dirty = true;
-        self.glow_dirty = true;
-        self.last_glow_build = Instant::now() - Duration::from_secs(1);
+        self.shadows_dirty = true;
+        self.last_shadow_build = Instant::now() - Duration::from_secs(1);
         self.fast_mode = false;
         self.dirty = true;
     }
@@ -284,7 +316,7 @@ impl Runtime {
         if content_changed {
             self.scene.layout(&mut LayoutEngine::new(&mut self.text));
             self.overlay_dirty = true;
-            self.glow_dirty = true;
+            self.shadows_dirty = true;
             self.dirty = true;
         }
         let media_changes = self.media.update(delta);
@@ -307,7 +339,7 @@ impl Runtime {
                 animation::update_scene(&mut self.scene, &self.animations, now);
             if animation_changed {
                 self.overlay_dirty = true;
-                self.glow_dirty = true;
+                self.shadows_dirty = true;
                 self.dirty = true;
             }
             if glow_changed {
@@ -316,7 +348,7 @@ impl Runtime {
                 if !self.fast_mode {
                     self.overlay_dirty = true;
                 }
-                self.glow_dirty = true;
+                self.shadows_dirty = true;
                 self.dirty = true;
             }
             self.animations_active = animation_active;
@@ -324,61 +356,22 @@ impl Runtime {
         self.dirty
     }
 
-    /// Encode a full-viewport transparent rect so Vello processes every tile.
-    /// Its fine rasterizer starts each pixel from `base_color` (transparent)
-    /// and writes whole tiles, so this clears stale overlay content without a
-    /// separate clear pass, which is unreliable with Vello's storage texture.
-    fn clear_canvas(&mut self) {
-        let rect = Rect::new(
-            0.0,
-            0.0,
-            self.viewport.width as f64,
-            self.viewport.height as f64,
-        );
-        self.canvas.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            // A non-zero alpha keeps Vello from culling the rect: every tile
-            // must be processed so stale glyphs are overwritten.
-            Color::new([0.0, 0.0, 0.0, 1.0 / 255.0]),
-            None,
-            &rect,
-        );
+    /// Rebuild the CPU-side shadow list from the current scene. This is cheap
+    /// and runs whenever a shadow value changes.
+    fn rebuild_shadows(&mut self) {
+        self.shadow_items = crate::render::painter::collect_shadow_draws(&self.scene);
     }
 
-    /// Rebuild the glow masks after a style, layout or content change. Text
-    /// Text nodes are grouped by `text-shadow` blur radius so each radius only
-    /// needs one offscreen pass.
-    fn rebuild_glow(&mut self) {
-        self.glow_layers.clear();
-        let mut radii: Vec<f32> = Vec::new();
-
-        fn visit(node: &Node, radii: &mut Vec<f32>) {
-            if matches!(node.kind, NodeKind::Text(_)) {
-                for shadow in node.text_shadows() {
-                    if shadow.color.components[3] <= 0.0 {
-                        continue;
-                    }
-                    let (_, _, blur) = node.shadow_metrics(shadow);
-                    if !radii.iter().any(|value| (*value - blur).abs() < 0.25) {
-                        radii.push(blur);
-                    }
-                }
-            }
-            for child in &node.children {
-                visit(child, radii);
-            }
+    /// Rasterize the glyph coverage of all shadowed text into the mask scene.
+    /// Skipped entirely when no text has a shadow.
+    fn rebuild_shadow_mask(&mut self) {
+        self.shadow_mask = VelloScene::new();
+        if self.shadow_items.is_empty() {
+            return;
         }
-        for root in &self.scene.roots {
-            visit(root, &mut radii);
-        }
-
-        for radius in radii {
-            let mut scene = VelloScene::new();
-            let mut painter = Painter::new(&mut self.text, &mut self.media);
-            painter.paint_gpu_shadows(&self.scene, &mut scene, radius, 1.0);
-            self.glow_layers.push(GlowLayer { scene, radius });
-        }
+        clear_scene(&mut self.shadow_mask, self.viewport, SHADOW_MASK_SCALE);
+        let mut painter = Painter::new(&mut self.text, &mut self.media);
+        painter.paint_text_masks(&self.scene, &mut self.shadow_mask, SHADOW_MASK_SCALE);
     }
 
     /// Prepare the next frame. Fast path videos are drawn as a single wgpu
@@ -417,31 +410,33 @@ impl Runtime {
                 self.overlay_dirty = true;
             }
             let overlay_updated = self.overlay_dirty;
-            // Animated glow properties only refresh the blurred masks, so cap
-            // that work at ~30 fps while video keeps compositing at its own
-            // frame rate.
-            let glow_due =
-                self.glow_dirty && self.last_glow_build.elapsed() >= Duration::from_millis(33);
-            let glow_updated = overlay_updated || glow_due;
+            // Shadow animation only re-blurs the cached mask, so cap that work
+            // at the frame interval while video keeps compositing.
+            let shadows_due =
+                self.shadows_dirty && self.last_shadow_build.elapsed() >= SHADOW_INTERVAL;
+            let shadows_updated = overlay_updated || shadows_due;
             if overlay_updated {
                 self.canvas.reset();
-                self.clear_canvas();
+                clear_scene(&mut self.canvas, self.viewport, 1.0);
                 let mut painter = Painter::new(&mut self.text, &mut self.media);
                 painter.inline_shadows = false;
                 painter.paint_filtered(&self.scene, &mut self.canvas, Some(uid));
                 self.overlay_dirty = false;
             }
-            if glow_updated {
-                self.rebuild_glow();
-                self.glow_dirty = false;
-                self.last_glow_build = Instant::now();
+            if shadows_updated {
+                self.rebuild_shadows();
+                if overlay_updated {
+                    self.rebuild_shadow_mask();
+                }
+                self.shadows_dirty = false;
+                self.last_shadow_build = Instant::now();
             }
             self.dirty = false;
             self.scene.clear_dirty();
             return FramePlan {
                 fast: true,
                 overlay_updated,
-                glow_updated,
+                shadows_updated,
                 video: Some(VideoFrame {
                     data: image,
                     x,
@@ -459,7 +454,7 @@ impl Runtime {
 
     fn prepare_full(&mut self, has_filtered_root: bool) -> FramePlan {
         self.canvas.reset();
-        self.clear_canvas();
+        clear_scene(&mut self.canvas, self.viewport, 1.0);
 
         if !has_filtered_root {
             let mut painter = Painter::new(&mut self.text, &mut self.media);
@@ -470,7 +465,7 @@ impl Runtime {
             return FramePlan {
                 fast: false,
                 overlay_updated: true,
-                glow_updated: false,
+                shadows_updated: false,
                 video: None,
                 filtered: false,
             };
@@ -519,7 +514,7 @@ impl Runtime {
         FramePlan {
             fast: false,
             overlay_updated: true,
-            glow_updated: false,
+            shadows_updated: false,
             video: None,
             filtered: true,
         }

@@ -15,13 +15,32 @@ use std::sync::Arc;
 use crate::media::VideoFrameData;
 use wgpu::{
     BindGroup, BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BindingType,
-    BlendComponent, BlendFactor, BlendOperation, BlendState, ColorTargetState, ColorWrites,
-    CommandEncoder, Device, Extent3d, FragmentState, MultisampleState, PipelineLayoutDescriptor,
-    PrimitiveState, Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
-    RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor,
-    ShaderModuleDescriptor, ShaderSource, ShaderStages, Texture, TextureFormat, TextureSampleType,
-    TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension, VertexState,
+    BlendComponent, BlendFactor, BlendOperation, BlendState, Buffer, BufferUsages,
+    ColorTargetState, ColorWrites, CommandEncoder, Device, Extent3d, FragmentState,
+    MultisampleState, PipelineLayoutDescriptor, PrimitiveState, Queue, RenderPassColorAttachment,
+    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerBindingType,
+    SamplerDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages, Texture, TextureFormat,
+    TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension,
+    VertexState,
 };
+
+/// Distinct blur radii that can be resolved per frame.
+pub const MAX_SHADOW_SLOTS: usize = 4;
+/// Shadows composited per frame, in paint order.
+pub const MAX_SHADOW_ITEMS: usize = 16;
+/// Header vec4 plus one (placement, colour) vec4 pair per shadow.
+const SHADOW_UNIFORM_BYTES: u64 = 16 + 32 * MAX_SHADOW_ITEMS as u64;
+
+/// One CSS text shadow for the overlay pass.
+#[derive(Clone, Copy, Debug)]
+pub struct ShadowItem {
+    /// Blur slot whose coverage is used.
+    pub slot: usize,
+    /// Offset in pixels.
+    pub offset: [f32; 2],
+    /// Straight-alpha colour.
+    pub color: [f32; 4],
+}
 
 pub struct VideoFrame {
     pub data: Arc<VideoFrameData>,
@@ -39,9 +58,13 @@ pub struct Compositor {
     sampler: Sampler,
     video_pipeline: RenderPipeline,
     overlay_pipeline: RenderPipeline,
-    glow_view: TextureView,
+    overlay_texture: Texture,
     overlay_view: TextureView,
     overlay_bind_group: BindGroup,
+    shadow_uniform: Buffer,
+    shadow_textures: Vec<Texture>,
+    shadow_views: Vec<TextureView>,
+    shadow_count: usize,
     video_y_texture: Option<Texture>,
     video_uv_texture: Option<Texture>,
     video_bind_group: Option<BindGroup>,
@@ -81,13 +104,17 @@ impl Compositor {
                     BindGroupLayoutEntry {
                         binding: 2,
                         visibility: ShaderStages::FRAGMENT,
-                        ty: BindingType::Texture {
-                            sample_type: TextureSampleType::Float { filterable: true },
-                            view_dimension: TextureViewDimension::D2,
-                            multisampled: false,
+                        ty: BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(SHADOW_UNIFORM_BYTES),
                         },
                         count: None,
                     },
+                    shadow_slot_layout_entry(3),
+                    shadow_slot_layout_entry(4),
+                    shadow_slot_layout_entry(5),
+                    shadow_slot_layout_entry(6),
                 ],
             });
         let video_bind_group_layout =
@@ -171,14 +198,21 @@ impl Compositor {
             ..Default::default()
         });
 
-        let (_overlay_texture, overlay_view) = create_overlay_texture(device, width, height);
-        let (_glow_texture, glow_view) = create_glow_texture(device, width, height);
+        let (overlay_texture, overlay_view) = create_overlay_texture(device, width, height);
+        let shadow_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("widdgyy shadow uniform"),
+            size: SHADOW_UNIFORM_BYTES,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let (shadow_textures, shadow_views) = create_shadow_slots(device, width, height);
         let overlay_bind_group = create_overlay_bind_group(
             device,
             &overlay_bind_group_layout,
             &overlay_view,
-            &glow_view,
             &sampler,
+            &shadow_uniform,
+            &shadow_views,
         );
 
         Self {
@@ -189,9 +223,13 @@ impl Compositor {
             sampler,
             video_pipeline,
             overlay_pipeline,
-            glow_view,
+            overlay_texture,
             overlay_view,
             overlay_bind_group,
+            shadow_uniform,
+            shadow_textures,
+            shadow_views,
+            shadow_count: 0,
             video_y_texture: None,
             video_uv_texture: None,
             video_bind_group: None,
@@ -204,16 +242,19 @@ impl Compositor {
         }
         self.width = width;
         self.height = height;
-        let (_texture, view) = create_overlay_texture(device, width, height);
-        self.overlay_view = view;
-        let (_glow_texture, glow_view) = create_glow_texture(device, width, height);
-        self.glow_view = glow_view;
+        let (overlay_texture, overlay_view) = create_overlay_texture(device, width, height);
+        self.overlay_texture = overlay_texture;
+        self.overlay_view = overlay_view;
+        let (shadow_textures, shadow_views) = create_shadow_slots(device, width, height);
+        self.shadow_textures = shadow_textures;
+        self.shadow_views = shadow_views;
         self.overlay_bind_group = create_overlay_bind_group(
             device,
             &self.overlay_bind_group_layout,
             &self.overlay_view,
-            &self.glow_view,
             &self.sampler,
+            &self.shadow_uniform,
+            &self.shadow_views,
         );
     }
 
@@ -221,34 +262,34 @@ impl Compositor {
         &self.overlay_view
     }
 
-    pub fn glow_view(&self) -> &TextureView {
-        &self.glow_view
+    /// Blurred shadow coverage for one blur radius. Filled by the offscreen
+    /// blur pass before `set_shadows` references it.
+    pub fn shadow_slot_view(&self, slot: usize) -> &TextureView {
+        &self.shadow_views[slot]
     }
 
-    /// Clear the pre-blurred glow layer before it is rebuilt.
-    pub fn clear_glow(&self, device: &Device, queue: &Queue) {
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("widdgyy clear glow"),
-        });
-        {
-            let _pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("widdgyy clear glow pass"),
-                color_attachments: &[Some(RenderPassColorAttachment {
-                    view: &self.glow_view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+    /// Upload the shadow list for the next composite, in paint order (later
+    /// items are drawn on top). Offsets are in pixels.
+    pub fn set_shadows(&mut self, queue: &Queue, items: &[ShadowItem]) {
+        let count = items.len().min(MAX_SHADOW_ITEMS);
+        let mut data = Vec::with_capacity(SHADOW_UNIFORM_BYTES as usize / 4);
+        data.extend_from_slice(&[count as f32, 0.0, 0.0, 0.0]);
+        for item in items.iter().take(count) {
+            let [r, g, b, a] = item.color;
+            data.extend_from_slice(&[
+                item.offset[0] / self.width as f32,
+                item.offset[1] / self.height as f32,
+                item.slot as f32,
+                0.0,
+                r,
+                g,
+                b,
+                a,
+            ]);
         }
-        queue.submit(Some(encoder.finish()));
+        data.resize(SHADOW_UNIFORM_BYTES as usize / 4, 0.0);
+        queue.write_buffer(&self.shadow_uniform, 0, &f32_bytes(&data));
+        self.shadow_count = count;
     }
 
     pub fn encode(
@@ -421,23 +462,53 @@ fn make_pipeline(
     })
 }
 
-fn create_glow_texture(device: &Device, width: u32, height: u32) -> (Texture, TextureView) {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("widdgyy glow target"),
-        size: Extent3d {
-            width: width.max(1),
-            height: height.max(1),
-            depth_or_array_layers: 1,
+/// Shadow slots hold blurred coverage (premultiplied white) for one blur
+/// radius each; the overlay pass tints them with the shadow colours.
+fn create_shadow_slots(
+    device: &Device,
+    width: u32,
+    height: u32,
+) -> (Vec<Texture>, Vec<TextureView>) {
+    (0..MAX_SHADOW_SLOTS)
+        .map(|index| {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("widdgyy shadow slot"),
+                size: Extent3d {
+                    width: width.max(1),
+                    height: height.max(1),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: TextureFormat::Rgba8Unorm,
+                usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&TextureViewDescriptor {
+                label: Some(if index == 0 {
+                    "shadow slot 0"
+                } else {
+                    "shadow slot"
+                }),
+                ..Default::default()
+            });
+            (texture, view)
+        })
+        .unzip()
+}
+
+fn shadow_slot_layout_entry(binding: u32) -> BindGroupLayoutEntry {
+    BindGroupLayoutEntry {
+        binding,
+        visibility: ShaderStages::FRAGMENT,
+        ty: BindingType::Texture {
+            sample_type: TextureSampleType::Float { filterable: true },
+            view_dimension: TextureViewDimension::D2,
+            multisampled: false,
         },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: TextureFormat::Rgba8Unorm,
-        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
-        view_formats: &[],
-    });
-    let view = texture.create_view(&TextureViewDescriptor::default());
-    (texture, view)
+        count: None,
+    }
 }
 
 fn create_overlay_texture(device: &Device, width: u32, height: u32) -> (Texture, TextureView) {
@@ -486,27 +557,43 @@ fn create_overlay_bind_group(
     device: &Device,
     layout: &BindGroupLayout,
     view: &TextureView,
-    glow_view: &TextureView,
     sampler: &Sampler,
+    shadow_uniform: &Buffer,
+    shadow_views: &[TextureView],
 ) -> BindGroup {
+    let mut entries = vec![
+        BindGroupEntry {
+            binding: 0,
+            resource: BindingResource::TextureView(view),
+        },
+        BindGroupEntry {
+            binding: 1,
+            resource: BindingResource::Sampler(sampler),
+        },
+        BindGroupEntry {
+            binding: 2,
+            resource: shadow_uniform.as_entire_binding(),
+        },
+    ];
+    for (index, shadow_view) in shadow_views.iter().enumerate() {
+        entries.push(BindGroupEntry {
+            binding: 3 + index as u32,
+            resource: BindingResource::TextureView(shadow_view),
+        });
+    }
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("widdgyy overlay bind group"),
         layout,
-        entries: &[
-            BindGroupEntry {
-                binding: 0,
-                resource: BindingResource::TextureView(view),
-            },
-            BindGroupEntry {
-                binding: 1,
-                resource: BindingResource::Sampler(sampler),
-            },
-            BindGroupEntry {
-                binding: 2,
-                resource: BindingResource::TextureView(glow_view),
-            },
-        ],
+        entries: &entries,
     })
+}
+
+fn f32_bytes(values: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(values.len() * 4);
+    for value in values {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes
 }
 
 fn create_video_bind_group(

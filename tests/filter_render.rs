@@ -88,7 +88,7 @@ fn renders_blur_and_drop_shadow() {
             )
             .expect("rendering filter layer");
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        filters.encode_layer(&queue, &mut encoder, &target_view, Some(filter), true, 2);
+        filters.encode_layer(&queue, &mut encoder, &target_view, Some(filter), true);
         queue.submit(Some(encoder.finish()));
 
         let pixels = read_back(&device, &queue, &target);

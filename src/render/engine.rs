@@ -16,8 +16,8 @@ use wgpu::{
     Texture, TextureFormat, TextureUsages, TextureView,
 };
 
-use super::GlowLayer;
-use super::compositor::{Compositor, VideoFrame};
+use super::ShadowDraw;
+use super::compositor::{Compositor, MAX_SHADOW_ITEMS, MAX_SHADOW_SLOTS, ShadowItem, VideoFrame};
 use super::filter::{FilterCompositor, FilterLayer, SpatialFilter};
 
 pub struct GpuRenderer {
@@ -29,6 +29,7 @@ pub struct GpuRenderer {
     vello: VelloRenderer,
     compositor: Compositor,
     filter: FilterCompositor,
+    shadow_filter: FilterCompositor,
     target: Texture,
     target_view: TextureView,
     blitter: TextureBlitter,
@@ -112,6 +113,13 @@ impl GpuRenderer {
         let blitter = TextureBlitter::new(&device, format);
         let compositor = Compositor::new(&device, format, width, height);
         let filter = FilterCompositor::new(&device, TextureFormat::Rgba8Unorm, width, height);
+        let (shadow_width, shadow_height) = shadow_extent(width, height);
+        let shadow_filter = FilterCompositor::new(
+            &device,
+            TextureFormat::Rgba8Unorm,
+            shadow_width,
+            shadow_height,
+        );
 
         Ok(Self {
             device,
@@ -122,6 +130,7 @@ impl GpuRenderer {
             vello,
             compositor,
             filter,
+            shadow_filter,
             target,
             target_view,
             blitter,
@@ -146,6 +155,9 @@ impl GpuRenderer {
         self.target_view = view;
         self.compositor.resize(&self.device, width, height);
         self.filter.resize(&self.device, width, height);
+        let (shadow_width, shadow_height) = shadow_extent(width, height);
+        self.shadow_filter
+            .resize(&self.device, shadow_width, shadow_height);
     }
 
     pub fn size(&self) -> (u32, u32) {
@@ -171,47 +183,73 @@ impl GpuRenderer {
             .context("Vello overlay rasterization")
     }
 
-    /// Rasterize the CSS text-shadow masks and blur them into the compositor
-    /// texture. Each layer carries its own radius, so different `text-shadow`
-    /// blur values get their own offscreen pass.
-    pub fn render_glow(&mut self, layers: &[GlowLayer]) -> Result<()> {
-        if layers.is_empty() {
-            self.compositor.clear_glow(&self.device, &self.queue);
-            return Ok(());
-        }
-        for (index, layer) in layers.iter().enumerate() {
-            let params = RenderParams {
-                base_color: Color::new([0.0, 0.0, 0.0, 0.0]),
-                width: self.width,
-                height: self.height,
-                antialiasing_method: AaConfig::Area,
+    /// Rasterize the glyph coverage of every text shadow once. The result stays
+    /// in the filter layer until the text changes; blur, offset and colour are
+    /// applied per frame by `render_shadows` without touching Vello again.
+    pub fn render_shadow_mask(&mut self, scene: &Scene) -> Result<()> {
+        let (width, height) = shadow_extent(self.width, self.height);
+        let params = RenderParams {
+            base_color: Color::new([0.0, 0.0, 0.0, 0.0]),
+            width,
+            height,
+            antialiasing_method: AaConfig::Area,
+        };
+        self.vello
+            .render_to_texture(
+                &self.device,
+                &self.queue,
+                scene,
+                self.shadow_filter.layer_view(),
+                &params,
+            )
+            .context("Vello shadow mask rasterization")
+    }
+
+    /// Blur the cached shadow mask once per distinct radius and upload the
+    /// shadow list. Radii beyond the slot budget reuse the nearest slot.
+    pub fn render_shadows(&mut self, shadows: &[ShadowDraw]) -> Result<()> {
+        let mut sigmas: Vec<f32> = Vec::new();
+        let mut items = Vec::with_capacity(shadows.len().min(MAX_SHADOW_ITEMS));
+        for shadow in shadows.iter().take(MAX_SHADOW_ITEMS) {
+            let slot = match sigmas
+                .iter()
+                .position(|sigma| (sigma - shadow.sigma).abs() < 0.05)
+            {
+                Some(slot) => slot,
+                None if sigmas.len() < MAX_SHADOW_SLOTS => {
+                    sigmas.push(shadow.sigma);
+                    sigmas.len() - 1
+                }
+                None => nearest_slot(&sigmas, shadow.sigma),
             };
-            self.vello
-                .render_to_texture(
-                    &self.device,
-                    &self.queue,
-                    &layer.scene,
-                    self.filter.layer_view(),
-                    &params,
-                )
-                .context("Vello glow rasterization")?;
+            items.push(ShadowItem {
+                slot,
+                offset: shadow.offset,
+                color: shadow.color,
+            });
+        }
+
+        for (slot, sigma) in sigmas.iter().enumerate() {
+            // Hard shadows skip the blur; the others run at mask resolution,
+            // so their sigma is halved to match.
+            let filter = (*sigma >= HARD_SHADOW_SIGMA).then(|| SpatialFilter::Blur {
+                radius: sigma * crate::app::SHADOW_MASK_SCALE as f32,
+            });
             let mut encoder = self
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("widdgyy glow blur"),
+                    label: Some("widdgyy shadow blur"),
                 });
-            self.filter.encode_layer(
+            self.shadow_filter.encode_layer(
                 &self.queue,
                 &mut encoder,
-                self.compositor.glow_view(),
-                Some(SpatialFilter::Blur {
-                    radius: layer.radius,
-                }),
-                index == 0,
-                3,
+                self.compositor.shadow_slot_view(slot),
+                filter,
+                true,
             );
             self.queue.submit(Some(encoder.finish()));
         }
+        self.compositor.set_shadows(&self.queue, &items);
         Ok(())
     }
 
@@ -299,7 +337,6 @@ impl GpuRenderer {
                 &self.target_view,
                 layer.filter,
                 index == 0,
-                2,
             );
             self.queue.submit(Some(encoder.finish()));
         }
@@ -368,4 +405,23 @@ fn create_target(device: &Device, width: u32, height: u32) -> (Texture, TextureV
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     (texture, view)
+}
+
+/// Shadow sigma below which the mask is composited without blur.
+const HARD_SHADOW_SIGMA: f32 = 0.5;
+
+fn shadow_extent(width: u32, height: u32) -> (u32, u32) {
+    (
+        ((width as f64 * crate::app::SHADOW_MASK_SCALE).ceil() as u32).max(1),
+        ((height as f64 * crate::app::SHADOW_MASK_SCALE).ceil() as u32).max(1),
+    )
+}
+
+fn nearest_slot(sigmas: &[f32], sigma: f32) -> usize {
+    sigmas
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| (*a - sigma).abs().total_cmp(&(*b - sigma).abs()))
+        .map(|(index, _)| index)
+        .unwrap_or(0)
 }

@@ -111,6 +111,10 @@ pub fn spatial_filter(filters: &[Filter], context: &ResolveContext) -> Option<Sp
 /// Three full-size textures are kept for the lifetime of the renderer (layer,
 /// horizontal blur, vertical blur) and reused for every layer and frame. This
 /// keeps memory independent of the number of filtered roots.
+/// Separable passes per Gaussian. Each pass is a nine-tap kernel with sigma
+/// of three taps; four passes keep the residual sampling pattern invisible.
+pub const BLUR_PASSES: u32 = 4;
+
 pub struct FilterCompositor {
     width: u32,
     height: u32,
@@ -354,22 +358,24 @@ impl FilterCompositor {
         target: &TextureView,
         filter: Option<SpatialFilter>,
         clear: bool,
-        blur_iterations: u32,
     ) {
         let Some(filter) = filter else {
             self.composite(encoder, target, clear, CompositeMode::Plain);
             return;
         };
 
-        let blur_radius = match filter {
+        // CSS `blur()` uses the value as the standard deviation, while
+        // box/text/drop shadows use half of their blur radius.
+        let sigma = match filter {
             SpatialFilter::Blur { radius } => radius,
-            SpatialFilter::DropShadow { blur, .. } => blur,
-        };
-        // The weights above approximate a Gaussian with sigma ≈ 2 in tap
-        // units; half the radius per tap makes the visible width close to the
-        // CSS length without needing a second shader for each scale.
-        let iterations = blur_iterations.clamp(1, 4);
-        let step = blur_radius * 0.25 / (iterations as f32).sqrt();
+            SpatialFilter::DropShadow { blur, .. } => blur * 0.5,
+        }
+        .max(0.0);
+        // Repeating the separable pass N times with spacing sigma / (3·√N)
+        // gives the requested total sigma. Many small steps keep the taps
+        // dense enough that the discrete sampling lattice does not show.
+        let iterations = BLUR_PASSES;
+        let step = sigma / (3.0 * (iterations as f32).sqrt());
         let step_x = step / self.width as f32;
         let step_y = step / self.height as f32;
         write_uniform(queue, &self.blur_h_uniform, &[step_x, 0.0, 0.0, 0.0]);

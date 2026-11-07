@@ -158,10 +158,16 @@ impl WaylandState {
             {
                 log::error!("overlay render failed: {error:#}");
             }
-            if plan.glow_updated
-                && let Err(error) = gpu.render_glow(self.runtime.glow_layers())
+            if plan.overlay_updated
+                && !self.runtime.shadow_items().is_empty()
+                && let Err(error) = gpu.render_shadow_mask(self.runtime.shadow_mask())
             {
-                log::error!("glow render failed: {error:#}");
+                log::error!("shadow mask render failed: {error:#}");
+            }
+            if plan.shadows_updated
+                && let Err(error) = gpu.render_shadows(self.runtime.shadow_items())
+            {
+                log::error!("shadow render failed: {error:#}");
             }
             if let Err(error) = gpu.render_composite(plan.video.as_ref()) {
                 log::error!("video composite failed: {error:#}");

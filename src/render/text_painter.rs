@@ -38,14 +38,12 @@ pub fn paint_text(
     paint_decoration(node, &shaped, &origin, canvas);
 }
 
-/// Draw one CSS text shadow as a plain glyph copy. The blur is applied later
-/// by the GPU filter pass, so this does not sample a glyph disk.
-pub fn paint_text_shadow(
+/// Draw the glyphs as opaque white coverage for the shadow mask.
+pub fn paint_text_mask(
     node: &Node,
     transform: &Affine,
     canvas: &mut Scene,
     engine: &mut TextEngine,
-    shadow: &crate::css::values::Shadow,
 ) {
     let NodeKindText::Text(content) = NodeKindText::from(&node.kind) else {
         return;
@@ -53,16 +51,14 @@ pub fn paint_text_shadow(
     let Some(shaped) = shape(node, engine, &content.text) else {
         return;
     };
-    let (dx, dy, _) = node.shadow_metrics(shadow);
     let origin = *transform
-        * Affine::translate((
-            node.layout.content_x as f64 + dx as f64,
-            node.layout.content_y as f64 + dy as f64,
-        ));
-    let color = node.filter_color(shadow.color);
-    if color.components[3] > 0.0 {
-        draw_shaped(canvas, &shaped, &origin, color);
-    }
+        * Affine::translate((node.layout.content_x as f64, node.layout.content_y as f64));
+    draw_shaped(
+        canvas,
+        &shaped,
+        &origin,
+        vello::peniko::Color::new([1.0, 1.0, 1.0, 1.0]),
+    );
 }
 
 /// Approximate a Gaussian text shadow by sampling a small disk around the
