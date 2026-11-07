@@ -399,16 +399,25 @@ impl<'a> LayoutEngine<'a> {
         let lines_count = lines.len();
         let total_cross =
             line_cross.iter().sum::<f32>() + cross_gap * (lines_count.saturating_sub(1)) as f32;
-        let content_cross = if is_row {
-            explicit_content_height.unwrap_or(total_cross)
+        // Without an explicit size the flex container shrink-wraps to its
+        // longest line. The available size is only the wrapping limit; using it
+        // as the final size would make anchors position a full-viewport box.
+        let max_line_main = lines
+            .iter()
+            .map(|line| {
+                line.iter()
+                    .map(|index| main_size(&node.children[*index]))
+                    .sum::<f32>()
+                    + main_gap * (line.len().saturating_sub(1)) as f32
+            })
+            .fold(0.0, f32::max);
+        let (explicit_main, explicit_cross) = if is_row {
+            (explicit_content_width, explicit_content_height)
         } else {
-            explicit_content_width.unwrap_or(total_cross)
+            (explicit_content_height, explicit_content_width)
         };
-        let content_main = if is_row {
-            explicit_content_width.unwrap_or(container_main)
-        } else {
-            explicit_content_height.unwrap_or(container_main)
-        };
+        let content_main = explicit_main.unwrap_or(max_line_main);
+        let content_cross = explicit_cross.unwrap_or(total_cross);
         let free_cross = (content_cross - total_cross).max(0.0);
         let (mut cross_cursor, line_extra) = match style.flex.align_content {
             AlignContent::Start | AlignContent::Stretch => (0.0, 0.0),
