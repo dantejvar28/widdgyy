@@ -14,7 +14,7 @@ use crate::css::properties::{
     AlignContent, AlignItems, Display, FlexDirection, FlexWrap, GridAutoFlow, JustifyContent,
     Position, TrackSize,
 };
-use crate::css::values::{Axis, Edges, ResolveContext};
+use crate::css::values::{Axis, Edges, ResolveContext, Size};
 use crate::scene::{Node, NodeKind};
 use crate::text::{ShapeRequest, TextEngine};
 
@@ -56,6 +56,25 @@ impl<'a> LayoutEngine<'a> {
         available_width: f32,
         available_height: f32,
     ) {
+        self.layout_node_with(
+            node,
+            viewport,
+            available_width,
+            available_height,
+            None,
+            None,
+        );
+    }
+
+    fn layout_node_with(
+        &mut self,
+        node: &mut Node,
+        viewport: Viewport,
+        available_width: f32,
+        available_height: f32,
+        forced_width: Option<f32>,
+        forced_height: Option<f32>,
+    ) {
         let style = node.style.clone();
         let font_size = style.text.font_size_px;
         let context = viewport.context(font_size, available_width, available_height);
@@ -65,21 +84,24 @@ impl<'a> LayoutEngine<'a> {
         let horizontal_extra = padding.left + padding.right + border.left + border.right;
         let vertical_extra = padding.top + padding.bottom + border.top + border.bottom;
 
-        let explicit_width =
+        let explicit_width = forced_width.map(|width| width.max(0.0)).or_else(|| {
             style
                 .width
                 .resolve(&context, Axis::Horizontal)
                 .map(|width| match style.box_sizing {
                     crate::css::BoxSizing::BorderBox => (width - horizontal_extra).max(0.0),
                     crate::css::BoxSizing::ContentBox => width,
-                });
-        let explicit_height = style
-            .height
-            .resolve(&context, Axis::Vertical)
-            .map(|height| match style.box_sizing {
-                crate::css::BoxSizing::BorderBox => (height - vertical_extra).max(0.0),
-                crate::css::BoxSizing::ContentBox => height,
-            });
+                })
+        });
+        let explicit_height = forced_height.map(|height| height.max(0.0)).or_else(|| {
+            style
+                .height
+                .resolve(&context, Axis::Vertical)
+                .map(|height| match style.box_sizing {
+                    crate::css::BoxSizing::BorderBox => (height - vertical_extra).max(0.0),
+                    crate::css::BoxSizing::ContentBox => height,
+                })
+        });
 
         let content_available_width = explicit_width.unwrap_or_else(|| {
             (available_width - margin.left - margin.right - horizontal_extra).max(0.0)
@@ -388,6 +410,79 @@ impl<'a> LayoutEngine<'a> {
             lines.reverse();
         }
 
+        let (explicit_main, explicit_cross) = if is_row {
+            (explicit_content_width, explicit_content_height)
+        } else {
+            (explicit_content_height, explicit_content_width)
+        };
+
+        // Distribute free main-axis space with flex-grow, or shrink items when
+        // an explicit size makes the line overflow.
+        if let Some(main_limit) = explicit_main {
+            for line in &lines {
+                let base_total = line
+                    .iter()
+                    .map(|index| main_size(&node.children[*index]))
+                    .sum::<f32>();
+                let free = main_limit - base_total;
+                if free.abs() <= 0.01 {
+                    continue;
+                }
+                let total_grow = line
+                    .iter()
+                    .map(|index| node.children[*index].style.flex.grow.max(0.0))
+                    .sum::<f32>();
+                let total_shrink = line
+                    .iter()
+                    .map(|index| {
+                        let child = &node.children[*index];
+                        let base = if is_row {
+                            child.layout.content_width
+                        } else {
+                            child.layout.content_height
+                        };
+                        child.style.flex.shrink.max(0.0) * base
+                    })
+                    .sum::<f32>();
+                for index in line {
+                    let child = &mut node.children[*index];
+                    let current = if is_row {
+                        child.layout.content_width
+                    } else {
+                        child.layout.content_height
+                    };
+                    let delta = if free > 0.0 && total_grow > 0.0 {
+                        free * child.style.flex.grow.max(0.0) / total_grow
+                    } else if free < 0.0 && total_shrink > 0.0 {
+                        let base = current.max(0.0);
+                        free * (child.style.flex.shrink.max(0.0) * base) / total_shrink
+                    } else {
+                        0.0
+                    };
+                    let next = (current + delta).max(0.0);
+                    if is_row {
+                        self.layout_node_with(
+                            child,
+                            viewport,
+                            available_width,
+                            available_height,
+                            Some(next),
+                            None,
+                        );
+                    } else {
+                        self.layout_node_with(
+                            child,
+                            viewport,
+                            available_width,
+                            available_height,
+                            None,
+                            Some(next),
+                        );
+                    }
+                }
+            }
+        }
+
         let line_cross: Vec<f32> = lines
             .iter()
             .map(|line| {
@@ -411,11 +506,6 @@ impl<'a> LayoutEngine<'a> {
                     + main_gap * (line.len().saturating_sub(1)) as f32
             })
             .fold(0.0, f32::max);
-        let (explicit_main, explicit_cross) = if is_row {
-            (explicit_content_width, explicit_content_height)
-        } else {
-            (explicit_content_height, explicit_content_width)
-        };
         let content_main = explicit_main.unwrap_or(max_line_main);
         let content_cross = explicit_cross.unwrap_or(total_cross);
         let free_cross = (content_cross - total_cross).max(0.0);
@@ -683,6 +773,41 @@ impl<'a> LayoutEngine<'a> {
 
         let column_gap = style.flex.column_gap.resolve(&context, Axis::Horizontal);
         let row_gap = style.flex.row_gap.resolve(&context, Axis::Vertical);
+
+        // Grid items stretch to their track by default when the axis is auto,
+        // matching browser grid behaviour.
+        for (index, placement) in placements.iter().enumerate() {
+            let Some((column, row, col_span, row_span)) = placement else {
+                continue;
+            };
+            let child = &mut node.children[index];
+            let span_width = column_widths[*column..column + col_span]
+                .iter()
+                .sum::<f32>()
+                + (col_span.saturating_sub(1)) as f32 * column_gap;
+            let span_height = row_heights[*row..row + row_span].iter().sum::<f32>()
+                + (row_span.saturating_sub(1)) as f32 * row_gap;
+            let extra_x = child.layout.width - child.layout.content_width;
+            let extra_y = child.layout.height - child.layout.content_height;
+            let force_width = matches!(child.style.width, Size::Auto).then(|| {
+                (span_width - child.layout.margin.left - child.layout.margin.right - extra_x)
+                    .max(0.0)
+            });
+            let force_height = matches!(child.style.height, Size::Auto).then(|| {
+                (span_height - child.layout.margin.top - child.layout.margin.bottom - extra_y)
+                    .max(0.0)
+            });
+            if force_width.is_some() || force_height.is_some() {
+                self.layout_node_with(
+                    child,
+                    viewport,
+                    content_available_width,
+                    content_available_height,
+                    force_width,
+                    force_height,
+                );
+            }
+        }
 
         for (index, placement) in placements.iter().enumerate() {
             let Some((column, row, _, _)) = placement else {

@@ -331,7 +331,7 @@ If a family exists but does not ship the exact weight/style (common for display 
 
 `flex`, `flex-direction`, `flex-wrap`, `flex-flow`, `justify-content`, `align-items`, `align-content`, `align-self`, `gap`, `row-gap`, `column-gap`, `order`, `flex-grow`, `flex-shrink`, `flex-basis`.
 
-`flex-wrap` creates multiple lines and respects `align-content`, `justify-content` per line and `align-items`. `flex-grow`/`flex-shrink` are parsed but not applied yet; explicit sizes and intrinsic widths determine box sizes.
+`flex-wrap` creates multiple lines and respects `align-content`, `justify-content` per line and `align-items`. `flex-grow` distributes free main-axis space and `flex-shrink` removes overflow; `flex-basis` is parsed but the measured size is used as the base for now.
 
 ### Grid
 
@@ -339,7 +339,7 @@ If a family exists but does not ship the exact weight/style (common for display 
 
 Track values: `auto`, `min-content`, `max-content`, `fit-content()`, `N fr`, `px`, `%`, `repeat()` and `minmax()`.
 
-Explicit `grid-column`/`grid-row` placement (including spans and `span N`) and automatic placement in row-major or column-major order are supported. Track lists accept whitespace-separated values such as `100px 1fr auto` and `repeat(2, 1fr)`.
+Explicit `grid-column`/`grid-row` placement (including spans and `span N`) and automatic placement in row-major or column-major order are supported. Track lists accept whitespace-separated values such as `100px 1fr auto` and `repeat(2, 1fr)`. Items with an `auto` axis stretch to their track, like browser grid.
 
 ### Animation and transitions
 

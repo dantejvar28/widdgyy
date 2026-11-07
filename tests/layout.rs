@@ -222,3 +222,81 @@ fn grid_places_explicit_and_auto_items() {
     assert_eq!(root.children[2].layout.x, 0.0);
     assert_eq!(root.children[2].layout.y, 0.0);
 }
+
+#[test]
+fn flex_grow_distributes_free_space() {
+    let css = Stylesheet::parse(
+        r#"
+        .root { display: flex; width: 300px; height: 100px; }
+        .a { width: 50px; height: 20px; flex-grow: 1; }
+        .b { width: 50px; height: 20px; flex-grow: 2; }
+        "#,
+    );
+    let mut scene = Scene::new(Viewport::default());
+    let mut root = Node::container("hbox", vec!["root".to_string()]);
+    for class in ["a", "b"] {
+        root.children
+            .push(Node::container("text", vec![class.to_string()]));
+    }
+    scene.roots.push(root);
+    let mut text = TextEngine::new();
+    scene.resolve_styles(&css);
+    scene.layout(&mut LayoutEngine::new(&mut text));
+
+    let root = &scene.roots[0];
+    assert!((root.children[0].layout.width - 116.67).abs() < 0.5);
+    assert!((root.children[1].layout.width - 183.33).abs() < 0.5);
+}
+
+#[test]
+fn flex_shrink_removes_overflow() {
+    let css = Stylesheet::parse(
+        r#"
+        .root { display: flex; width: 100px; height: 100px; }
+        .a { width: 80px; height: 20px; flex-shrink: 1; }
+        .b { width: 80px; height: 20px; flex-shrink: 1; }
+        "#,
+    );
+    let mut scene = Scene::new(Viewport::default());
+    let mut root = Node::container("hbox", vec!["root".to_string()]);
+    for class in ["a", "b"] {
+        root.children
+            .push(Node::container("text", vec![class.to_string()]));
+    }
+    scene.roots.push(root);
+    let mut text = TextEngine::new();
+    scene.resolve_styles(&css);
+    scene.layout(&mut LayoutEngine::new(&mut text));
+
+    let root = &scene.roots[0];
+    assert!((root.children[0].layout.width - 50.0).abs() < 0.5);
+    assert!((root.children[1].layout.width - 50.0).abs() < 0.5);
+}
+
+#[test]
+fn grid_items_stretch_to_their_tracks() {
+    let css = Stylesheet::parse(
+        r#"
+        .root {
+            display: grid;
+            width: 200px;
+            height: 100px;
+            grid-template-columns: 100px 100px;
+            grid-template-rows: 50px;
+        }
+        .item { }
+        "#,
+    );
+    let mut scene = Scene::new(Viewport::default());
+    let mut root = Node::container("grid", vec!["root".to_string()]);
+    root.children
+        .push(Node::container("text", vec!["item".to_string()]));
+    scene.roots.push(root);
+    let mut text = TextEngine::new();
+    scene.resolve_styles(&css);
+    scene.layout(&mut LayoutEngine::new(&mut text));
+
+    let item = &scene.roots[0].children[0];
+    assert_eq!(item.layout.width, 100.0);
+    assert_eq!(item.layout.height, 50.0);
+}
