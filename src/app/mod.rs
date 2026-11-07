@@ -94,6 +94,9 @@ pub struct FramePlan {
     pub overlay_updated: bool,
     /// True when the shadow blur and shadow list must be refreshed.
     pub shadows_updated: bool,
+    /// Render the cached overlay and GPU shadows through the video compositor
+    /// even without a video (the no-filter full path).
+    pub compose: bool,
     pub video: Option<VideoFrame>,
     /// True when `Runtime::render_layers()` must be used instead of the single
     /// cached overlay scene. Only set for the full (non-video) path.
@@ -455,6 +458,7 @@ impl Runtime {
                 fast: true,
                 overlay_updated,
                 shadows_updated,
+                compose: false,
                 video: Some(VideoFrame {
                     data: image,
                     x,
@@ -476,14 +480,20 @@ impl Runtime {
 
         if !has_filtered_root {
             let mut painter = Painter::new(&mut self.text, &mut self.media);
+            painter.inline_shadows = false;
             painter.paint(&self.scene, &mut self.canvas);
+            self.rebuild_shadows();
+            self.rebuild_shadow_mask();
             self.overlay_dirty = false;
+            self.shadows_dirty = false;
+            self.last_shadow_build = Instant::now();
             self.dirty = false;
             self.scene.clear_dirty();
             return FramePlan {
                 fast: false,
                 overlay_updated: true,
-                shadows_updated: false,
+                shadows_updated: true,
+                compose: true,
                 video: None,
                 filtered: false,
             };
@@ -533,6 +543,7 @@ impl Runtime {
             fast: false,
             overlay_updated: true,
             shadows_updated: false,
+            compose: false,
             video: None,
             filtered: true,
         }

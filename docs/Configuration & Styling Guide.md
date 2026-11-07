@@ -315,6 +315,8 @@ As in browsers, a border is only painted when a non-`none` border style is prese
 
 `color`, `font-family`, `font-size`, `font-weight`, `font-style`, `font-stretch`, `font-variant-caps`, `line-height`, `letter-spacing`, `word-spacing`, `text-align`, `text-align-last`, `text-decoration*`, `text-transform`, `text-indent`, `white-space`, `text-wrap`, `overflow-wrap`, `word-break`, `text-overflow`, `text-shadow`, `direction`, `vertical-align`, and the `font` shorthand.
 
+Colors include named/hex/`rgb()`/`hsl()`, modern spaces (`oklch()`, `oklab()`, `lab()`, `lch()`, `hwb()`, `color()`), and `color-mix(in srgb, ...)` with optional percentages.
+
 If a family exists but does not ship the exact weight/style (common for display fonts with only a Regular face), Widdgyy uses the closest face from that same family instead of silently switching to a different font family.
 
 ### Effects
@@ -323,7 +325,7 @@ If a family exists but does not ship the exact weight/style (common for display 
 
 `blur()` and `drop-shadow()` work on root-level nodes through an offscreen layer. Nested spatial filters, `backdrop-filter`, masks and border-image are still pending.
 
-On the video path `text-shadow` is rendered with a real GPU Gaussian blur (see above). Without video the blur is approximated with a compact sampled glyph halo, because Vello has no arbitrary glyph blur.
+`text-shadow` is rendered with a real GPU Gaussian blur on both the video and the no-video paths (see above). Only scenes with root-level spatial filters use the older sampled approximation.
 
 ### Flex
 

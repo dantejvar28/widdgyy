@@ -159,7 +159,7 @@ impl WaylandState {
         let Some(gpu) = &mut self.gpu else {
             return;
         };
-        if plan.fast {
+        if plan.fast || plan.compose {
             if plan.overlay_updated
                 && let Err(error) = gpu.render_overlay(self.runtime.overlay_scene())
             {
