@@ -58,6 +58,9 @@ pub struct Compositor {
     sampler: Sampler,
     video_pipeline: RenderPipeline,
     overlay_pipeline: RenderPipeline,
+    backdrop_bind_group_layout: BindGroupLayout,
+    backdrop_pipeline: RenderPipeline,
+    backdrop_bind_group: Option<BindGroup>,
     overlay_texture: Texture,
     overlay_view: TextureView,
     overlay_bind_group: BindGroup,
@@ -115,6 +118,20 @@ impl Compositor {
                     shadow_slot_layout_entry(4),
                     shadow_slot_layout_entry(5),
                     shadow_slot_layout_entry(6),
+                ],
+            });
+        let backdrop_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("widdgyy backdrop bind group layout"),
+                entries: &[
+                    texture_entry(0),
+                    texture_entry(1),
+                    BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: ShaderStages::FRAGMENT,
+                        ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                        count: None,
+                    },
                 ],
             });
         let video_bind_group_layout =
@@ -188,6 +205,31 @@ impl Compositor {
             },
             "widdgyy overlay quad",
         );
+        let backdrop_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("widdgyy backdrop pipeline layout"),
+            bind_group_layouts: &[Some(&backdrop_bind_group_layout)],
+            immediate_size: 0,
+        });
+        let backdrop_pipeline = make_pipeline_with_fragment(
+            device,
+            &backdrop_pipeline_layout,
+            &overlay_shader,
+            format,
+            BlendState {
+                color: BlendComponent {
+                    src_factor: BlendFactor::SrcAlpha,
+                    dst_factor: BlendFactor::OneMinusSrcAlpha,
+                    operation: BlendOperation::Add,
+                },
+                alpha: BlendComponent {
+                    src_factor: BlendFactor::One,
+                    dst_factor: BlendFactor::OneMinusSrcAlpha,
+                    operation: BlendOperation::Add,
+                },
+            },
+            "widdgyy backdrop quad",
+            "fs_backdrop",
+        );
         let sampler = device.create_sampler(&SamplerDescriptor {
             label: Some("widdgyy compositor sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -223,6 +265,9 @@ impl Compositor {
             sampler,
             video_pipeline,
             overlay_pipeline,
+            backdrop_bind_group_layout,
+            backdrop_pipeline,
+            backdrop_bind_group: None,
             overlay_texture,
             overlay_view,
             overlay_bind_group,
@@ -292,18 +337,101 @@ impl Compositor {
         self.shadow_count = count;
     }
 
-    pub fn encode(
-        &mut self,
+    /// Upload the newest video frame. `encode` reuses the prepared bind group.
+    pub fn prepare_video(&mut self, device: &Device, queue: &Queue, video: Option<&VideoFrame>) {
+        if let Some(video) = video {
+            self.upload_video(device, queue, video);
+        }
+    }
+
+    /// Draw the prepared video into an offscreen target so it can be blurred.
+    pub fn render_video_to(
+        &self,
         device: &Device,
         queue: &Queue,
+        target: &TextureView,
+        video: &VideoFrame,
+        scale: f32,
+    ) {
+        let Some(bind_group) = &self.video_bind_group else {
+            return;
+        };
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("widdgyy backdrop video"),
+        });
+        {
+            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("widdgyy backdrop video pass"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            let width = self.width as f32 * scale;
+            let height = self.height as f32 * scale;
+            let x = (video.x * scale).clamp(0.0, width);
+            let y = (video.y * scale).clamp(0.0, height);
+            let draw_width = (video.width * scale).min(width - x).max(0.0);
+            let draw_height = (video.height * scale).min(height - y).max(0.0);
+            if draw_width > 0.0 && draw_height > 0.0 {
+                pass.set_pipeline(&self.video_pipeline);
+                pass.set_bind_group(0, bind_group, &[]);
+                pass.set_viewport(x, y, draw_width, draw_height, 0.0, 1.0);
+                pass.set_scissor_rect(x as u32, y as u32, draw_width as u32, draw_height as u32);
+                pass.draw(0..3, 0..1);
+            }
+        }
+        queue.submit(Some(encoder.finish()));
+    }
+
+    /// Enable the backdrop pass with the blurred video and panel mask.
+    pub fn set_backdrop(
+        &mut self,
+        device: &Device,
+        blurred_view: &TextureView,
+        mask_view: &TextureView,
+    ) {
+        self.backdrop_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("widdgyy backdrop bind group"),
+            layout: &self.backdrop_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(blurred_view),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::TextureView(mask_view),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        }));
+    }
+
+    pub fn clear_backdrop(&mut self) {
+        self.backdrop_bind_group = None;
+    }
+
+    pub fn encode(
+        &mut self,
+        _device: &Device,
+        _queue: &Queue,
         encoder: &mut CommandEncoder,
         target: &TextureView,
         video: Option<&VideoFrame>,
     ) {
-        if let Some(video) = video {
-            self.upload_video(device, queue, video);
-        }
-
         let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("widdgyy composite"),
             color_attachments: &[Some(RenderPassColorAttachment {
@@ -335,6 +463,14 @@ impl Compositor {
                 pass.set_scissor_rect(x as u32, y as u32, width as u32, height as u32);
                 pass.draw(0..3, 0..1);
             }
+        }
+
+        if let Some(bind_group) = &self.backdrop_bind_group {
+            pass.set_pipeline(&self.backdrop_pipeline);
+            pass.set_bind_group(0, bind_group, &[]);
+            pass.set_viewport(0.0, 0.0, self.width as f32, self.height as f32, 0.0, 1.0);
+            pass.set_scissor_rect(0, 0, self.width, self.height);
+            pass.draw(0..3, 0..1);
         }
 
         pass.set_pipeline(&self.overlay_pipeline);
@@ -427,6 +563,19 @@ impl Compositor {
     }
 }
 
+fn texture_entry(binding: u32) -> BindGroupLayoutEntry {
+    BindGroupLayoutEntry {
+        binding,
+        visibility: ShaderStages::FRAGMENT,
+        ty: BindingType::Texture {
+            sample_type: TextureSampleType::Float { filterable: true },
+            view_dimension: TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
 fn make_pipeline(
     device: &Device,
     layout: &wgpu::PipelineLayout,
@@ -434,6 +583,18 @@ fn make_pipeline(
     format: TextureFormat,
     blend: BlendState,
     label: &'static str,
+) -> RenderPipeline {
+    make_pipeline_with_fragment(device, layout, shader, format, blend, label, "fs_main")
+}
+
+fn make_pipeline_with_fragment(
+    device: &Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    format: TextureFormat,
+    blend: BlendState,
+    label: &'static str,
+    fragment_entry: &'static str,
 ) -> RenderPipeline {
     device.create_render_pipeline(&RenderPipelineDescriptor {
         label: Some(label),
@@ -449,7 +610,7 @@ fn make_pipeline(
         multisample: MultisampleState::default(),
         fragment: Some(FragmentState {
             module: shader,
-            entry_point: Some("fs_main"),
+            entry_point: Some(fragment_entry),
             targets: &[Some(ColorTargetState {
                 format,
                 blend: Some(blend),

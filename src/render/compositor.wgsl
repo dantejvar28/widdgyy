@@ -78,3 +78,16 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let out_premultiplied = base.rgb * base.a + shadow_rgb * (1.0 - base.a);
     return vec4<f32>(out_premultiplied / max(out_a, 1e-4), out_a);
 }
+
+@group(0) @binding(0) var backdrop_blur: texture_2d<f32>;
+@group(0) @binding(1) var backdrop_mask: texture_2d<f32>;
+@group(0) @binding(2) var backdrop_sampler: sampler;
+
+/// Blurred video masked by the panel coverage. Drawn over the sharp video,
+/// before the overlay.
+@fragment
+fn fs_backdrop(input: VertexOutput) -> @location(0) vec4<f32> {
+    let color = textureSample(backdrop_blur, backdrop_sampler, input.uv);
+    let mask = textureSample(backdrop_mask, backdrop_sampler, input.uv).a;
+    return vec4<f32>(color.rgb, mask);
+}

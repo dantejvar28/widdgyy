@@ -323,7 +323,9 @@ If a family exists but does not ship the exact weight/style (common for display 
 
 `opacity`, `box-shadow` (outer and inset), `text-shadow`, `mix-blend-mode`, `filter` (color-matrix filters), individual `translate`/`rotate`/`scale`, `transform`, `transform-origin`, `clip-path` (inset/circle/ellipse/polygon/path), `isolation`, `object-fit`, `object-position`.
 
-`blur()` and `drop-shadow()` work on root nodes and on nested descendants: the painter splits the paint into layers at each filtered node. A filter inside an already-filtered subtree, or under a node with opacity/clip/isolation, is ignored. `backdrop-filter`, masks and border-image are still pending.
+`blur()` and `drop-shadow()` work on root nodes and on nested descendants: the painter splits the paint into layers at each filtered node. A filter inside an already-filtered subtree, or under a node with opacity/clip/isolation, is ignored.
+
+`backdrop-filter: blur(Npx)` works on the video fast path: the video is rendered offscreen at half resolution, blurred, and blended behind each panel using a coverage mask. The largest blur radius in the scene is used. Without a video wallpaper the backdrop is ignored.
 
 `text-shadow` is rendered with a real GPU Gaussian blur on both the video and the no-video paths (see above). Only scenes with root-level spatial filters use the older sampled approximation.
 
@@ -361,9 +363,9 @@ Supported features: `min-width`, `max-width`, `min-height`, `max-height`, `orien
 
 These are parsed where possible but not painted yet, and are documented so they do not fail silently:
 
-- `backdrop-filter` (the values are parsed but the backdrop is not sampled).
 - Nested filters inside an already-filtered subtree or under opacity/clip/isolation.
 - `mask-image`, `border-image` and multiple background layers.
+- `backdrop-filter` outside the video fast path.
 - SVG external clip paths (`clip-path: url(...)`).
 - `@import`.
 - Animation property interpolation/transitions.

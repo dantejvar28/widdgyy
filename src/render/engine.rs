@@ -18,7 +18,7 @@ use wgpu::{
 
 use super::ShadowDraw;
 use super::compositor::{Compositor, MAX_SHADOW_ITEMS, MAX_SHADOW_SLOTS, ShadowItem, VideoFrame};
-use super::filter::{FilterCompositor, FilterLayer, SpatialFilter};
+use super::filter::{ExternalLayerSpec, FilterCompositor, FilterLayer, SpatialFilter};
 
 pub struct GpuRenderer {
     pub device: Device,
@@ -30,6 +30,13 @@ pub struct GpuRenderer {
     compositor: Compositor,
     filter: FilterCompositor,
     shadow_filter: FilterCompositor,
+    backdrop_filter: FilterCompositor,
+    backdrop_source: Texture,
+    backdrop_source_view: TextureView,
+    backdrop_mask: Texture,
+    backdrop_mask_view: TextureView,
+    backdrop_blur: Texture,
+    backdrop_blur_view: TextureView,
     target: Texture,
     target_view: TextureView,
     blitter: TextureBlitter,
@@ -120,6 +127,37 @@ impl GpuRenderer {
             shadow_width,
             shadow_height,
         );
+        let (backdrop_width, backdrop_height) = backdrop_extent(width, height);
+        let backdrop_filter = FilterCompositor::new(
+            &device,
+            TextureFormat::Rgba8Unorm,
+            backdrop_width,
+            backdrop_height,
+        );
+        let (backdrop_source, backdrop_source_view) = create_backdrop_texture(
+            &device,
+            "widdgyy backdrop source",
+            backdrop_width,
+            backdrop_height,
+            format,
+            TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+        );
+        let (backdrop_mask, backdrop_mask_view) = create_backdrop_texture(
+            &device,
+            "widdgyy backdrop mask",
+            backdrop_width,
+            backdrop_height,
+            TextureFormat::Rgba8Unorm,
+            TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
+        );
+        let (backdrop_blur, backdrop_blur_view) = create_backdrop_texture(
+            &device,
+            "widdgyy backdrop blur",
+            backdrop_width,
+            backdrop_height,
+            TextureFormat::Rgba8Unorm,
+            TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+        );
 
         Ok(Self {
             device,
@@ -131,6 +169,13 @@ impl GpuRenderer {
             compositor,
             filter,
             shadow_filter,
+            backdrop_filter,
+            backdrop_source,
+            backdrop_source_view,
+            backdrop_mask,
+            backdrop_mask_view,
+            backdrop_blur,
+            backdrop_blur_view,
             target,
             target_view,
             blitter,
@@ -158,6 +203,39 @@ impl GpuRenderer {
         let (shadow_width, shadow_height) = shadow_extent(width, height);
         self.shadow_filter
             .resize(&self.device, shadow_width, shadow_height);
+        let (backdrop_width, backdrop_height) = backdrop_extent(width, height);
+        self.backdrop_filter
+            .resize(&self.device, backdrop_width, backdrop_height);
+        let (source, source_view) = create_backdrop_texture(
+            &self.device,
+            "widdgyy backdrop source",
+            backdrop_width,
+            backdrop_height,
+            self.format,
+            TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+        );
+        self.backdrop_source = source;
+        self.backdrop_source_view = source_view;
+        let (mask, mask_view) = create_backdrop_texture(
+            &self.device,
+            "widdgyy backdrop mask",
+            backdrop_width,
+            backdrop_height,
+            TextureFormat::Rgba8Unorm,
+            TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
+        );
+        self.backdrop_mask = mask;
+        self.backdrop_mask_view = mask_view;
+        let (blur, blur_view) = create_backdrop_texture(
+            &self.device,
+            "widdgyy backdrop blur",
+            backdrop_width,
+            backdrop_height,
+            TextureFormat::Rgba8Unorm,
+            TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+        );
+        self.backdrop_blur = blur;
+        self.backdrop_blur_view = blur_view;
     }
 
     pub fn size(&self) -> (u32, u32) {
@@ -253,8 +331,70 @@ impl GpuRenderer {
         Ok(())
     }
 
+    /// Rasterize the panel mask used by the backdrop pass.
+    pub fn render_backdrop_mask(&mut self, scene: &Scene) -> Result<()> {
+        let (width, height) = backdrop_extent(self.width, self.height);
+        let params = RenderParams {
+            base_color: Color::new([0.0, 0.0, 0.0, 0.0]),
+            width,
+            height,
+            antialiasing_method: AaConfig::Area,
+        };
+        self.vello
+            .render_to_texture(
+                &self.device,
+                &self.queue,
+                scene,
+                &self.backdrop_mask_view,
+                &params,
+            )
+            .context("Vello backdrop mask rasterization")
+    }
+
     /// Composite the newest video frame and the cached overlay to the surface.
-    pub fn render_composite(&mut self, video: Option<&VideoFrame>) -> Result<()> {
+    pub fn render_composite(
+        &mut self,
+        video: Option<&VideoFrame>,
+        backdrop_radius: Option<f32>,
+    ) -> Result<()> {
+        self.compositor
+            .prepare_video(&self.device, &self.queue, video);
+        if let (Some(video), Some(radius)) = (video, backdrop_radius) {
+            self.compositor.render_video_to(
+                &self.device,
+                &self.queue,
+                &self.backdrop_source_view,
+                video,
+                crate::app::BACKDROP_MASK_SCALE as f32,
+            );
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("widdgyy backdrop blur"),
+                });
+            self.backdrop_filter.encode_source_layer(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                ExternalLayerSpec {
+                    source: &self.backdrop_source_view,
+                    target: &self.backdrop_blur_view,
+                    filter: SpatialFilter::Blur {
+                        radius: radius * crate::app::BACKDROP_MASK_SCALE as f32,
+                    },
+                    clear: true,
+                },
+            );
+            self.queue.submit(Some(encoder.finish()));
+            self.compositor.set_backdrop(
+                &self.device,
+                &self.backdrop_blur_view,
+                &self.backdrop_mask_view,
+            );
+        } else {
+            self.compositor.clear_backdrop();
+        }
+
         let Some(frame) = self.acquire_surface() else {
             return Ok(());
         };
@@ -415,6 +555,39 @@ fn shadow_extent(width: u32, height: u32) -> (u32, u32) {
         ((width as f64 * crate::app::SHADOW_MASK_SCALE).ceil() as u32).max(1),
         ((height as f64 * crate::app::SHADOW_MASK_SCALE).ceil() as u32).max(1),
     )
+}
+
+fn backdrop_extent(width: u32, height: u32) -> (u32, u32) {
+    (
+        ((width as f64 * crate::app::BACKDROP_MASK_SCALE).ceil() as u32).max(1),
+        ((height as f64 * crate::app::BACKDROP_MASK_SCALE).ceil() as u32).max(1),
+    )
+}
+
+fn create_backdrop_texture(
+    device: &Device,
+    label: &str,
+    width: u32,
+    height: u32,
+    format: TextureFormat,
+    usage: TextureUsages,
+) -> (Texture, TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
 }
 
 fn nearest_slot(sigmas: &[f32], sigma: f32) -> usize {

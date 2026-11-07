@@ -291,6 +291,60 @@ impl<'a> Painter<'a> {
 
         effects_painter::end_effects(layer, canvas);
     }
+
+    /// Paint the boxes of nodes with `backdrop-filter` into a white coverage
+    /// mask. The compositor blends the blurred video through this alpha.
+    pub fn paint_backdrop_masks(
+        &mut self,
+        sticker_scene: &StickerScene,
+        canvas: &mut Scene,
+        scale: f64,
+    ) {
+        let mut indices: Vec<usize> = (0..sticker_scene.roots.len()).collect();
+        indices.sort_by_key(|index| sticker_scene.roots[*index].z_index);
+        for index in indices {
+            self.paint_backdrop_node(&sticker_scene.roots[index], Affine::scale(scale), canvas);
+        }
+    }
+
+    fn paint_backdrop_node(&mut self, node: &Node, parent_visual: Affine, canvas: &mut Scene) {
+        if !node.visible || node.style.display == crate::css::Display::None {
+            return;
+        }
+        let width = node.layout.width.max(0.0);
+        let height = node.layout.height.max(0.0);
+        if width <= 0.0 || height <= 0.0 {
+            return;
+        }
+        let context = node
+            .style
+            .resolve_context(crate::css::Viewport::default(), width, height);
+        let local = effects_painter::node_transform(node, &context);
+        let translate = Affine::translate((node.absolute_x as f64, node.absolute_y as f64));
+        let base = parent_visual * translate * local;
+        let children_visual = parent_visual
+            * translate
+            * local
+            * Affine::translate((-node.absolute_x as f64, -node.absolute_y as f64));
+
+        if node.backdrop_blur().is_some() {
+            let radius = box_painter::radius(&node.style.border.radius, &context, width, height);
+            let rect = vello::kurbo::Rect::new(0.0, 0.0, width as f64, height as f64);
+            canvas.fill(
+                vello::peniko::Fill::NonZero,
+                base,
+                vello::peniko::Color::new([1.0, 1.0, 1.0, 1.0]),
+                None,
+                &vello::kurbo::RoundedRect::from_rect(rect, radius),
+            );
+        }
+
+        let mut indices: Vec<usize> = (0..node.children.len()).collect();
+        indices.sort_by_key(|index| node.children[*index].z_index);
+        for index in indices {
+            self.paint_backdrop_node(&node.children[index], children_visual, canvas);
+        }
+    }
 }
 
 /// Collect text shadows in paint order. Within one text node the last CSS

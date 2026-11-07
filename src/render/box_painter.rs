@@ -364,7 +364,7 @@ fn paint_edge(
     canvas.fill(vello::peniko::Fill::NonZero, *transform, color, None, &rect);
 }
 
-fn radius(
+pub(crate) fn radius(
     edges: &crate::css::Edges<Length>,
     context: &ResolveContext,
     width: f32,

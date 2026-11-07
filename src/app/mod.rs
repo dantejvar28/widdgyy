@@ -41,6 +41,10 @@ const SHADOW_INTERVAL: Duration = Duration::from_millis(16);
 /// the full-resolution passes.
 pub const SHADOW_MASK_SCALE: f64 = 0.5;
 
+/// Backdrop masks and blurred video run at half resolution. Glass is soft, so
+/// the upscale is invisible and the blur cost drops to a quarter.
+pub const BACKDROP_MASK_SCALE: f64 = 0.5;
+
 /// Fill a scene with a full-viewport transparent rect. Vello processes every
 /// tile when a shape covers it, which overwrites stale pixels from the last
 /// render. A non-zero alpha stops the rect from being culled as empty.
@@ -67,6 +71,8 @@ pub struct Runtime {
     layers: Vec<FilterLayer>,
     shadow_items: Vec<ShadowDraw>,
     shadow_mask: VelloScene,
+    backdrop_mask: VelloScene,
+    backdrop_radius: Option<f32>,
     last_shadow_build: Instant,
     viewport: Viewport,
     last_tick: Instant,
@@ -130,6 +136,8 @@ impl Runtime {
             layers: Vec::new(),
             shadow_items: Vec::new(),
             shadow_mask: VelloScene::new(),
+            backdrop_mask: VelloScene::new(),
+            backdrop_radius: None,
             last_shadow_build: Instant::now() - Duration::from_secs(1),
             viewport,
             last_tick: Instant::now(),
@@ -167,6 +175,16 @@ impl Runtime {
     /// changes, not when a shadow animates.
     pub fn shadow_mask(&self) -> &VelloScene {
         &self.shadow_mask
+    }
+
+    /// White coverage of the panels that request `backdrop-filter`.
+    pub fn backdrop_mask(&self) -> &VelloScene {
+        &self.backdrop_mask
+    }
+
+    /// Largest `backdrop-filter: blur()` radius in the scene, if any.
+    pub fn backdrop_radius(&self) -> Option<f32> {
+        self.backdrop_radius
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -314,6 +332,7 @@ impl Runtime {
         self.animations_active = active;
         self.last_animation_sample = Instant::now() - Duration::from_secs(1);
         self.rebuild_shadows();
+        self.rebuild_backdrop_mask();
         self.layers.clear();
         self.overlay_dirty = true;
         self.shadows_dirty = true;
@@ -393,6 +412,32 @@ impl Runtime {
         painter.paint_text_masks(&self.scene, &mut self.shadow_mask, SHADOW_MASK_SCALE);
     }
 
+    /// Rasterize the boxes of backdrop-filter panels. The mask is static until
+    /// the layout or styles change.
+    fn rebuild_backdrop_mask(&mut self) {
+        self.backdrop_mask = VelloScene::new();
+        self.backdrop_radius = None;
+        let mut radius: Option<f32> = None;
+        fn visit(node: &Node, radius: &mut Option<f32>) {
+            if let Some(blur) = node.backdrop_blur() {
+                *radius = Some(radius.map_or(blur, |current: f32| current.max(blur)));
+            }
+            for child in &node.children {
+                visit(child, radius);
+            }
+        }
+        for root in &self.scene.roots {
+            visit(root, &mut radius);
+        }
+        self.backdrop_radius = radius;
+        if radius.is_none() {
+            return;
+        }
+        clear_scene(&mut self.backdrop_mask, self.viewport, BACKDROP_MASK_SCALE);
+        let mut painter = Painter::new(&mut self.text, &mut self.media);
+        painter.paint_backdrop_masks(&self.scene, &mut self.backdrop_mask, BACKDROP_MASK_SCALE);
+    }
+
     /// Prepare the next frame. Fast path videos are drawn as a single wgpu
     /// texture; the Vello overlay is only re-rendered when its content changes.
     pub fn prepare_frame(&mut self) -> FramePlan {
@@ -443,6 +488,7 @@ impl Runtime {
                 self.rebuild_shadows();
                 if overlay_updated {
                     self.rebuild_shadow_mask();
+                    self.rebuild_backdrop_mask();
                 }
                 self.shadows_dirty = false;
                 self.last_shadow_build = Instant::now();
@@ -479,6 +525,7 @@ impl Runtime {
             painter.paint(&self.scene, &mut self.canvas);
             self.rebuild_shadows();
             self.rebuild_shadow_mask();
+            self.rebuild_backdrop_mask();
             self.overlay_dirty = false;
             self.shadows_dirty = false;
             self.last_shadow_build = Instant::now();

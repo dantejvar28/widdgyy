@@ -232,6 +232,23 @@ impl Node {
         self.animated.color.unwrap_or(self.style.text.color)
     }
 
+    /// Largest `backdrop-filter: blur()` radius, in pixels.
+    pub fn backdrop_blur(&self) -> Option<f32> {
+        let context = self.style.resolve_context(
+            Viewport::default(),
+            self.layout.width.max(0.0),
+            self.layout.height.max(0.0),
+        );
+        let mut blur: Option<f32> = None;
+        for filter in &self.style.effects.backdrop_filters {
+            if let crate::css::properties::Filter::Blur(length) = filter {
+                let radius = length.resolve(&context, Axis::Horizontal).max(0.0);
+                blur = Some(blur.map_or(radius, |current: f32| current.max(radius)));
+            }
+        }
+        blur
+    }
+
     pub fn text_shadows(&self) -> &[Shadow] {
         self.animated
             .text_shadows

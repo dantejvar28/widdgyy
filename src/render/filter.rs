@@ -47,6 +47,15 @@ pub enum SpatialFilter {
     },
 }
 
+/// Source and destination for blurring an external texture, such as the video
+/// backdrop.
+pub struct ExternalLayerSpec<'a> {
+    pub source: &'a TextureView,
+    pub target: &'a TextureView,
+    pub filter: SpatialFilter,
+    pub clear: bool,
+}
+
 /// One compositing layer, in paint order.
 pub struct FilterLayer {
     pub scene: VelloScene,
@@ -418,6 +427,76 @@ impl FilterCompositor {
                 self.composite(encoder, target, clear, CompositeMode::Shadow);
             }
         }
+    }
+
+    /// Blur an arbitrary source texture (for example the video) into a
+    /// target. The source is treated as straight alpha, which is correct for
+    /// opaque video frames.
+    pub fn encode_source_layer(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        encoder: &mut CommandEncoder,
+        spec: ExternalLayerSpec<'_>,
+    ) {
+        let ExternalLayerSpec {
+            source,
+            target,
+            filter,
+            clear,
+        } = spec;
+        let sigma = match filter {
+            SpatialFilter::Blur { radius } => radius,
+            SpatialFilter::DropShadow { blur, .. } => blur * 0.5,
+        }
+        .max(0.0);
+        let iterations = BLUR_PASSES;
+        let step = sigma / (3.0 * (iterations as f32).sqrt());
+        let step_x = step / self.width as f32;
+        let step_y = step / self.height as f32;
+        write_uniform(queue, &self.blur_h_uniform, &[step_x, 0.0, 0.0, 0.0]);
+        write_uniform(queue, &self.blur_v_uniform, &[0.0, step_y, 0.0, 0.0]);
+        let source_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("widdgyy filter external source"),
+            layout: &self.blur_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(source),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Sampler(&self.sampler),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: self.blur_h_uniform.as_entire_binding(),
+                },
+            ],
+        });
+        self.blur_pass(
+            encoder,
+            &self.blur_a_view,
+            &self.premultiply_pipeline,
+            &source_bind_group,
+        );
+        for iteration in 0..iterations {
+            self.blur_pass(
+                encoder,
+                &self.blur_b_view,
+                &self.blur_pipeline,
+                &self.blur_v_bind_group,
+            );
+            if iteration + 1 < iterations {
+                self.blur_pass(
+                    encoder,
+                    &self.blur_a_view,
+                    &self.blur_pipeline,
+                    &self.blur_h2_bind_group,
+                );
+            }
+        }
+        self.composite(encoder, target, clear, CompositeMode::Blurred);
     }
 
     fn blur_pass(
