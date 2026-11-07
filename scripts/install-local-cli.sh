@@ -30,7 +30,13 @@ install_local_launcher() {
   install -dm755 "${INSTALL_DIR}"
   install -Dm755 "${ROOT_DIR}/target/release/widdgyy" "${INSTALL_DIR}/widdgyy"
 
+  # Python config DSL. The binary looks it up under ~/.local/share/widdgyy.
+  install -dm755 "${HOME}/.local/share/widdgyy/python"
+  rm -rf "${HOME}/.local/share/widdgyy/python/widdgyy"
+  cp -r "${ROOT_DIR}/python/widdgyy" "${HOME}/.local/share/widdgyy/python/"
+
   echo "Installed: ${INSTALL_DIR}/widdgyy"
+  echo "Installed: ${HOME}/.local/share/widdgyy/python/widdgyy"
 
   case ":${PATH}:" in
     *":${INSTALL_DIR}:"*)
@@ -106,6 +112,8 @@ package() {
   cd "${srcdir}"
   install -Dm755 "${srcdir}/../target/release/widdgyy" "${pkgdir}/usr/bin/widdgyy"
   install -dm755 "${pkgdir}/usr/share/widdgyy"
+  install -dm755 "${pkgdir}/usr/share/widdgyy/python"
+  cp -r python/widdgyy "${pkgdir}/usr/share/widdgyy/python/"
   if [[ -d assets ]]; then
     cp -r assets "${pkgdir}/usr/share/widdgyy/"
   fi

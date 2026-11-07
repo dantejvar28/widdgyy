@@ -65,7 +65,6 @@ pub enum Pseudo {
     Not(Vec<Selector>),
     Is(Vec<Selector>),
     Where(Vec<Selector>),
-    Dynamic(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,8 +114,7 @@ impl Compound {
                 | Pseudo::FirstChild
                 | Pseudo::LastChild
                 | Pseudo::OnlyChild
-                | Pseudo::NthChild(..)
-                | Pseudo::Dynamic(_) => Specificity {
+                | Pseudo::NthChild(..) => Specificity {
                     classes: 1,
                     ..Specificity::ZERO
                 },
@@ -358,7 +356,6 @@ impl Pseudo {
             Self::Is(selectors) | Self::Where(selectors) => selectors
                 .iter()
                 .any(|selector| selector.matches(element, &[])),
-            Self::Dynamic(_) => false,
         }
     }
 }
@@ -620,7 +617,7 @@ fn parse_pseudo(input: &str) -> Result<(Pseudo, usize), String> {
                 "where" => Pseudo::Where(parse_selector_list(inner)?),
                 "nth-child" => parse_nth(inner)?,
                 "nth-last-child" => parse_nth(inner)?,
-                _ => Pseudo::Dynamic(lower),
+                _ => return Err(format!("unsupported pseudo-class: :{lower}")),
             },
             total,
         ));
@@ -632,7 +629,7 @@ fn parse_pseudo(input: &str) -> Result<(Pseudo, usize), String> {
             "first-child" => Pseudo::FirstChild,
             "last-child" => Pseudo::LastChild,
             "only-child" => Pseudo::OnlyChild,
-            other => Pseudo::Dynamic(other.to_string()),
+            other => return Err(format!("unsupported pseudo-class: :{other}")),
         },
         total,
     ))

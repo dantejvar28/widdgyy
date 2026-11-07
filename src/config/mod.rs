@@ -1,21 +1,24 @@
 // SPDX-FileCopyrightText: 2026 Daniel
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! JSON5 configuration loader.
+//! Scene configuration loader.
 //!
-//! The JSON schema mirrors the original Python implementation, but the loader
-//! emits scene nodes plus low-priority style declarations. That means a value
-//! from `config.jsonc` acts as a default and `styles.css` can still override it,
-//! exactly like normal CSS author styles.
+//! `config.jsonc` is read directly. `config.py` is executed with `python3`,
+//! which prints the same JSON document; the rest of the loader is shared.
+//! Values act as low-priority style declarations, so `styles.css` still
+//! overrides them like normal CSS author styles.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
 use crate::css::parser::RawDeclaration;
 use crate::scene::{Anchor, ApiSpec, MediaContent, MediaKind, Node, Scene};
+
+pub mod migrate;
 
 pub struct ConfigLoader {
     pub path: PathBuf,
@@ -27,10 +30,78 @@ impl ConfigLoader {
     }
 
     pub fn load(&self, viewport: crate::css::Viewport) -> Result<Scene> {
+        let value = self.load_value()?;
+        self.scene_from_value(&value, viewport)
+    }
+
+    fn load_value(&self) -> Result<Value> {
+        if self
+            .path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            == Some("py")
+        {
+            return self.run_python();
+        }
         let source = std::fs::read_to_string(&self.path)
             .with_context(|| format!("reading {}", self.path.display()))?;
-        let value: Value =
-            json5::from_str(&source).with_context(|| format!("parsing {}", self.path.display()))?;
+        json5::from_str(&source).with_context(|| format!("parsing {}", self.path.display()))
+    }
+
+    /// Execute `config.py` with the `widdgyy` Python package and parse its
+    /// JSON output. A timeout keeps a broken config from freezing the reload.
+    fn run_python(&self) -> Result<Value> {
+        let package_dir = python_package_dir().context(
+            "the widdgyy Python package was not found; reinstall widdgyy or set WIDDGYY_PYTHON_DIR",
+        )?;
+        let mut child = Command::new("python3")
+            .arg("-m")
+            .arg("widdgyy.build")
+            .arg(&self.path)
+            .env("PYTHONPATH", &package_dir)
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .env("PYTHONUNBUFFERED", "1")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .with_context(|| format!("executing python3 for {}", self.path.display()))?;
+        let timeout = Duration::from_secs(3);
+        let started = Instant::now();
+        loop {
+            match child.try_wait()? {
+                Some(_) => break,
+                None if started.elapsed() >= timeout => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    bail!(
+                        "python configuration {} timed out after {}s",
+                        self.path.display(),
+                        timeout.as_secs()
+                    );
+                }
+                None => std::thread::sleep(Duration::from_millis(10)),
+            }
+        }
+        let output = child
+            .wait_with_output()
+            .with_context(|| format!("collecting python output for {}", self.path.display()))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!(
+                "python configuration {} failed:\n{}",
+                self.path.display(),
+                stderr.trim()
+            );
+        }
+        serde_json::from_slice(&output.stdout).with_context(|| {
+            format!(
+                "parsing the JSON produced by python configuration {}",
+                self.path.display()
+            )
+        })
+    }
+
+    fn scene_from_value(&self, value: &Value, viewport: crate::css::Viewport) -> Result<Scene> {
         let stickers = value
             .get("stickers")
             .and_then(Value::as_array)
@@ -412,6 +483,25 @@ fn media_kind(path: &Path) -> MediaKind {
         "mp4" | "mkv" | "webm" | "avi" | "mov" | "m4v" => MediaKind::Video,
         _ => MediaKind::Image,
     }
+}
+
+/// Directory that must be on `PYTHONPATH` so `import widdgyy` works.
+fn python_package_dir() -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(path) = std::env::var_os("WIDDGYY_PYTHON_DIR") {
+        candidates.push(PathBuf::from(path));
+    }
+    if let Some(data) = std::env::var_os("XDG_DATA_HOME") {
+        candidates.push(PathBuf::from(data).join("widdgyy/python"));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        candidates.push(PathBuf::from(home).join(".local/share/widdgyy/python"));
+    }
+    candidates.push(PathBuf::from("/usr/share/widdgyy/python"));
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("python"));
+    candidates
+        .into_iter()
+        .find(|dir| dir.join("widdgyy/__init__.py").is_file())
 }
 
 #[cfg(test)]

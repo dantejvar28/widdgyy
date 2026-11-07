@@ -12,7 +12,7 @@ use crate::css::{Stylesheet, Viewport};
 use crate::scene::{Node, Scene};
 
 pub fn run(config_path: Option<PathBuf>) -> Result<()> {
-    let path = config_path.unwrap_or_else(|| crate::user_config_dir().join("config.jsonc"));
+    let path = config_path.unwrap_or_else(crate::user_config_path);
     let loader = ConfigLoader::new(&path);
     let viewport = Viewport::default();
     let scene = loader

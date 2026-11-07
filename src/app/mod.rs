@@ -33,7 +33,7 @@ use crate::render::{
 };
 use crate::scene::{MediaKind, Node, NodeKind, Scene};
 use crate::text::TextEngine;
-use crate::user_config_dir;
+use crate::user_config_path;
 
 /// Shadow blur and shadow list refresh rate while animations are running.
 const SHADOW_INTERVAL: Duration = Duration::from_millis(16);
@@ -84,6 +84,7 @@ pub struct Runtime {
     animations: HashMap<u64, AnimationSet>,
     animations_active: bool,
     last_animation_sample: Instant,
+    auto_config: bool,
     dirty: bool,
 }
 
@@ -101,8 +102,9 @@ pub struct FramePlan {
 
 impl Runtime {
     pub fn from_default_config(viewport: Viewport) -> Result<Self> {
-        let dir = user_config_dir();
-        Self::new(dir.join("config.jsonc"), viewport)
+        let mut runtime = Self::new(user_config_path(), viewport)?;
+        runtime.auto_config = true;
+        Ok(runtime)
     }
 
     pub fn new(config_path: impl AsRef<Path>, viewport: Viewport) -> Result<Self> {
@@ -142,6 +144,7 @@ impl Runtime {
             animations: HashMap::new(),
             animations_active: false,
             last_animation_sample: Instant::now() - Duration::from_secs(1),
+            auto_config: false,
             dirty: true,
         };
         runtime.media.set_base_dir(runtime.config.config_dir());
@@ -219,6 +222,21 @@ impl Runtime {
                     }
                     log::debug!("watch event {:?} {:?}", event.kind, event.paths);
                     for path in &event.paths {
+                        // With the default config, creating config.py switches
+                        // the active source without a restart.
+                        if self.auto_config
+                            && matches!(
+                                path.file_name().and_then(|name| name.to_str()),
+                                Some("config.py") | Some("config.jsonc")
+                            )
+                        {
+                            let preferred = user_config_path();
+                            if preferred != self.config.path {
+                                self.config.path = preferred;
+                                self.config_mtime = mtime(&self.config.path);
+                                changed = true;
+                            }
+                        }
                         if path == &self.config.path {
                             let current = mtime(&self.config.path);
                             if current != self.config_mtime {

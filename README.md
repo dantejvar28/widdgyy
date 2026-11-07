@@ -17,7 +17,7 @@ Widdgyy is a native Rust application. There is no Python runtime and no GTK depe
 | Video | GStreamer `playbin` + `appsink` (NV12) | Y/UV planes are uploaded to wgpu and converted by a shader; no GTK widget, overlay or CPU RGBA conversion |
 | Styling | Built-in CSS engine | Typed style modules, cascade, variables, shorthands, media queries |
 
-The old Python implementation was removed. The JSON schema and the CSS class model are preserved, so existing `config.jsonc` / `styles.css` files keep working.
+The scene is described by `config.py` (preferred) or the legacy `config.jsonc`; the CSS class model is preserved in both, so `styles.css` keeps working. Migrate with `widdgyy --migrate-config config.jsonc > config.py`.
 
 > **Compatibility note:** the previous Python widget extension point was never a public plugin API (types were hard-coded in the loader), so this rewrite does not remove a supported extension mechanism. If a plugin system is added later, it should be designed explicitly (WASM, Lua or a stable Rust trait).
 
@@ -28,7 +28,7 @@ The old Python implementation was removed. The JSON schema and the CSS class mod
 - **Bounded caches:** text shaping and media assets have hard limits; reloading drops the old scene and releases its assets.
 - **Animations:** `@keyframes` for transform, opacity, colors and background-color, with delay/duration/direction/iteration/fill-mode.
 - **Diagnostics:** `widdgyy --check-css` lists unsupported properties and at-rules.
-- **Hot reload:** editing `config.jsonc` or `styles.css` rebuilds the scene without restarting.
+- **Hot reload:** editing `config.py`, `config.jsonc` or `styles.css` rebuilds the scene without restarting.
 - **API stickers:** requests run on worker threads and report through a channel; the render loop never blocks on the network.
 - **Animated media:** GIF and video frames update through the same clock as widgets.
 
@@ -61,7 +61,7 @@ sudo apt install -y build-essential pkg-config \
 cargo build --release
 ./target/release/widdgyy
 # optional: use another config directory/file
-./target/release/widdgyy --config /path/to/config.jsonc
+./target/release/widdgyy --config /path/to/config.py
 # audit unsupported CSS without opening a window
 ./target/release/widdgyy --check-css
 
@@ -93,7 +93,8 @@ The package build runs in `~/.cache/widdgyy-makepkg`, not in the cloned reposito
 
 Widdgyy reads:
 
-- `~/.config/widdgyy/config.jsonc`
+- `~/.config/widdgyy/config.py` (preferred)
+- `~/.config/widdgyy/config.jsonc` (legacy fallback)
 - `~/.config/widdgyy/styles.css`
 
 A minimal example:

@@ -35,7 +35,7 @@ use smithay_client_toolkit::{
 use wayland_client::{
     Connection, Proxy, QueueHandle,
     globals::registry_queue_init,
-    protocol::{wl_output, wl_surface},
+    protocol::{wl_output, wl_region, wl_surface},
 };
 
 use crate::app::Runtime;
@@ -60,6 +60,11 @@ pub fn run(config_path: Option<std::path::PathBuf>) -> Result<()> {
     layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
     layer.set_exclusive_zone(-1);
     layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+    // An empty input region makes the wallpaper transparent to pointer input:
+    // clicks go straight to the desktop below instead of being swallowed.
+    let input_region = compositor_state.wl_compositor().create_region(&qh, ());
+    layer.wl_surface().set_input_region(Some(&input_region));
+    input_region.destroy();
     layer.set_size(0, 0);
     layer.commit();
 
@@ -132,6 +137,8 @@ pub fn run(config_path: Option<std::path::PathBuf>) -> Result<()> {
     }
     Ok(())
 }
+
+wayland_client::delegate_noop!(WaylandState: ignore wl_region::WlRegion);
 
 struct WaylandState {
     registry_state: RegistryState,

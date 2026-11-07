@@ -1,15 +1,18 @@
 # Widdgyy Configuration & Styling Guide
 
-This document explains how to configure Widdgyy with `config.jsonc` and `styles.css`, where the files live, which sticker types exist and which CSS features are supported by the Rust/Vello renderer.
+This document explains how to configure Widdgyy with `config.py` (preferred) or `config.jsonc` (legacy), plus `styles.css`, where the files live, which sticker types exist and which CSS features are supported by the Rust/Vello renderer.
 
 ## Configuration files
 
 Widdgyy reads:
 
 ```
-~/.config/widdgyy/config.jsonc
+~/.config/widdgyy/config.py       # preferred, executed with python3
+~/.config/widdgyy/config.jsonc    # legacy fallback
 ~/.config/widdgyy/styles.css
 ```
+
+When both config files exist, `config.py` wins.
 
 Create the directory if it does not exist:
 
@@ -18,6 +21,44 @@ mkdir -p ~/.config/widdgyy
 ```
 
 ## Config structure
+
+### Python configuration
+
+`config.py` builds the scene with small Python objects. Styling stays in `styles.css`: every object takes a `cls` argument and the engine applies those classes through the normal CSS cascade.
+
+```python
+from widdgyy import ApiText, Clock, HBox, Video
+
+stickers = [
+    Video("assets/wallpaper.mp4", cls="background", z=-1),
+    HBox(Clock("%H:%M:%S", cls="clock"), anchor="center", offset=(0, -220)),
+    ApiText(
+        "https://api.open-meteo.com/v1/forecast?latitude=-34.6&longitude=-58.4&current=temperature_2m",
+        template="{temp}°C",
+        fields={"temp": "current.temperature_2m"},
+        cls="weather",
+        anchor="bottom-right",
+        offset=(-40, -40),
+    ),
+]
+```
+
+- Node classes: `Text`, `Clock`, `ApiText`, `Video`, `Image`, `Gif`, `HBox`, `VBox`, `Grid`.
+- Common arguments: `cls` (string or list), `id`, `anchor`, `offset=(x, y)`, `z`, `style={...}`, `margin`, `padding`, `gap`, `font_size`, `width`, `height`, `color`.
+- Containers take children positionally: `HBox(Clock(...), Text(...), cls="row")`. `Grid(..., columns=3)`.
+- Any other JSON field is accepted as a keyword argument and passed through.
+- Python loops and constants are allowed to generate repeated stickers; the visual style still belongs in CSS.
+- `config.py` runs with your user permissions. Do not put secrets in it.
+
+Migrate an existing JSONC file:
+
+```bash
+widdgyy --migrate-config ~/.config/widdgyy/config.jsonc > ~/.config/widdgyy/config.py
+```
+
+The Python package is installed to `~/.local/share/widdgyy/python` (or `/usr/share/widdgyy/python` by the package). `WIDDGYY_PYTHON_DIR` can point at a development copy.
+
+### JSONC configuration (legacy)
 
 `config.jsonc` is JSON5, so comments and trailing commas are allowed. The top-level object must contain a `stickers` array.
 
@@ -212,7 +253,7 @@ Supports `text`, `font_size`/`font-size`, `color`, margins and all common positi
 - `*`
 - `:root`, `:first-child`, `:last-child`, `:only-child`, `:nth-child()`, `:not()`, `:is()`, `:where()`
 
-Dynamic pseudo classes (`:hover`, etc.) are parsed but never match because the background layer does not receive pointer input.
+Interaction pseudo-classes (`:hover`, `:focus`, `:active`, …) are rejected during parsing because the wallpaper is display-only. The layer uses an empty Wayland input region, so clicks pass through to the desktop.
 
 ### Cascade
 
@@ -322,11 +363,11 @@ These are parsed where possible but not painted yet, and are documented so they 
 - SVG external clip paths (`clip-path: url(...)`).
 - `@import`.
 - Animation property interpolation/transitions.
-- Pointer/hover/focus pseudo classes (the surface uses `KeyboardInteractivity::None`).
+- (Interaction pseudo-classes are intentionally unsupported; the wallpaper is display-only.)
 
 ## Hot reload
 
-Widdgyy watches the config directory. Writing `config.jsonc` or `styles.css` triggers a debounced reload:
+Widdgyy watches the config directory. Writing `config.py`, `config.jsonc` or `styles.css` triggers a debounced reload. Creating `config.py` switches the active source without a restart:
 
 - the new scene replaces the old one;
 - styles are re-resolved and layout is recomputed;
@@ -348,7 +389,7 @@ Useful messages: missing fonts, failed media loads, unsupported CSS properties, 
 
 ```bash
 mkdir -p ~/.config/widdgyy
-cp examples/config.jsonc ~/.config/widdgyy/
+cp examples/config.py ~/.config/widdgyy/
 cp examples/styles.css ~/.config/widdgyy/
 ./target/release/widdgyy
 ```

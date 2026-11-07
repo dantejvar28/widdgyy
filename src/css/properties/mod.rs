@@ -413,10 +413,8 @@ pub struct Declarations {
     pub grid_column: Option<(i32, i32)>,
     pub grid_row: Option<(i32, i32)>,
 
-    // stacking / interaction
+    // stacking
     pub z_index: Option<i32>,
-    pub pointer_events: Option<bool>,
-    pub cursor: Option<String>,
 
     // animation / transition
     pub animation: Option<Vec<transition::Animation>>,
@@ -478,14 +476,6 @@ fn apply_misc(decl: &mut Declarations, name: &str, value: &str) -> bool {
                 "collapse" => Visibility::Collapse,
                 _ => return false,
             });
-            true
-        }
-        "pointer-events" => {
-            decl.pointer_events = Some(!value.eq_ignore_ascii_case("none"));
-            true
-        }
-        "cursor" => {
-            decl.cursor = Some(value.to_string());
             true
         }
         _ => false,

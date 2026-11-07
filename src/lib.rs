@@ -30,6 +30,17 @@ pub mod text;
 use std::path::PathBuf;
 
 /// Default XDG configuration directory.
+/// Active configuration: `config.py` wins when present, otherwise JSONC.
+pub fn user_config_path() -> PathBuf {
+    let dir = user_config_dir();
+    let python = dir.join("config.py");
+    if python.is_file() {
+        python
+    } else {
+        dir.join("config.jsonc")
+    }
+}
+
 pub fn user_config_dir() -> PathBuf {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)

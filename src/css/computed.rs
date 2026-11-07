@@ -261,8 +261,6 @@ pub struct ComputedStyle {
     pub grid: GridStyle,
 
     pub z_index: i32,
-    pub pointer_events: bool,
-    pub cursor: Option<String>,
     pub animations: Vec<Animation>,
     pub transitions: Vec<Transition>,
     pub custom_properties: BTreeMap<String, String>,
@@ -300,8 +298,6 @@ impl Default for ComputedStyle {
             flex: FlexStyle::default(),
             grid: GridStyle::default(),
             z_index: 0,
-            pointer_events: true,
-            cursor: None,
             animations: Vec::new(),
             transitions: Vec::new(),
             custom_properties: BTreeMap::new(),
@@ -347,8 +343,6 @@ impl ComputedStyle {
                 flex: FlexStyle::default(),
                 grid: GridStyle::default(),
                 z_index: 0,
-                pointer_events: parent.pointer_events,
-                cursor: parent.cursor.clone(),
                 animations: Vec::new(),
                 transitions: Vec::new(),
                 custom_properties: parent.custom_properties.clone(),
@@ -380,10 +374,6 @@ impl ComputedStyle {
         style.aspect_ratio = declarations.aspect_ratio;
         style.visibility = declarations.visibility.unwrap_or(style.visibility);
         style.z_index = declarations.z_index.unwrap_or(0);
-        style.pointer_events = declarations.pointer_events.unwrap_or(style.pointer_events);
-        if declarations.cursor.is_some() {
-            style.cursor = declarations.cursor.clone();
-        }
         if let Some(animations) = &declarations.animation {
             style.animations = animations.clone();
         }
