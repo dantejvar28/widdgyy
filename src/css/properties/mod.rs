@@ -380,6 +380,7 @@ pub struct Declarations {
     pub box_shadow: Option<Vec<Shadow>>,
     pub filter: Option<Vec<Filter>>,
     pub backdrop_filter: Option<Vec<Filter>>,
+    pub mask_image: Option<background::BackgroundImage>,
     pub mix_blend_mode: Option<Mix>,
     pub transform: Option<Vec<TransformOp>>,
     pub translate: Option<(Length, Length)>,

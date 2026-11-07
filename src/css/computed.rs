@@ -141,6 +141,7 @@ pub struct EffectsStyle {
     pub box_shadows: Vec<Shadow>,
     pub filters: Vec<Filter>,
     pub backdrop_filters: Vec<Filter>,
+    pub mask_image: Option<crate::css::properties::background::BackgroundImage>,
     pub mix_blend_mode: Mix,
     pub transform: Vec<TransformOp>,
     pub translate: Option<(Length, Length)>,
@@ -160,6 +161,7 @@ impl Default for EffectsStyle {
             box_shadows: Vec::new(),
             filters: Vec::new(),
             backdrop_filters: Vec::new(),
+            mask_image: None,
             mix_blend_mode: Mix::Normal,
             transform: Vec::new(),
             translate: None,
@@ -546,6 +548,9 @@ impl ComputedStyle {
         }
         if let Some(filters) = &declarations.backdrop_filter {
             style.effects.backdrop_filters = filters.clone();
+        }
+        if let Some(mask) = &declarations.mask_image {
+            style.effects.mask_image = Some(mask.clone());
         }
         if let Some(blend) = declarations.mix_blend_mode {
             style.effects.mix_blend_mode = blend;

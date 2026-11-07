@@ -321,11 +321,13 @@ If a family exists but does not ship the exact weight/style (common for display 
 
 ### Effects
 
-`opacity`, `box-shadow` (outer and inset), `text-shadow`, `mix-blend-mode`, `filter` (color-matrix filters), individual `translate`/`rotate`/`scale`, `transform`, `transform-origin`, `clip-path` (inset/circle/ellipse/polygon/path), `isolation`, `object-fit`, `object-position`.
+`opacity`, `box-shadow` (outer and inset), `text-shadow`, `mix-blend-mode`, `filter` (color-matrix filters), individual `translate`/`rotate`/`scale`, `transform`, `transform-origin`, `clip-path` (inset/circle/ellipse/polygon/path), `isolation`, `object-fit`, `object-position`, `backdrop-filter` (video path) and `mask-image` (gradients).
 
 `blur()` and `drop-shadow()` work on root nodes and on nested descendants: the painter splits the paint into layers at each filtered node. A filter inside an already-filtered subtree, or under a node with opacity/clip/isolation, is ignored.
 
 `backdrop-filter: blur(Npx)` works on the video fast path: the video is rendered offscreen at half resolution, blurred, and blended behind each panel using a coverage mask. The largest blur radius in the scene is used. Without a video wallpaper the backdrop is ignored.
+
+`mask-image` supports linear, radial and conic gradients. Gradient stops are treated as alpha (the RGB is converted to white), so `transparent → black → transparent` fades the element and its children. `mask-size`, `mask-position`, `mask-repeat` and URL masks are not implemented yet.
 
 `text-shadow` is rendered with a real GPU Gaussian blur on both the video and the no-video paths (see above). Only scenes with root-level spatial filters use the older sampled approximation.
 
@@ -364,7 +366,8 @@ Supported features: `min-width`, `max-width`, `min-height`, `max-height`, `orien
 These are parsed where possible but not painted yet, and are documented so they do not fail silently:
 
 - Nested filters inside an already-filtered subtree or under opacity/clip/isolation.
-- `mask-image`, `border-image` and multiple background layers.
+- `mask-size`, `mask-position`, `mask-repeat`, URL masks and `border-image`.
+- Multiple background layers.
 - `backdrop-filter` outside the video fast path.
 - SVG external clip paths (`clip-path: url(...)`).
 - `@import`.

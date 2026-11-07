@@ -232,6 +232,11 @@ impl Node {
         self.animated.color.unwrap_or(self.style.text.color)
     }
 
+    /// Mask image (currently gradients) applied to the element and its children.
+    pub fn mask_image(&self) -> Option<&crate::css::properties::background::BackgroundImage> {
+        self.style.effects.mask_image.as_ref()
+    }
+
     /// Largest `backdrop-filter: blur()` radius, in pixels.
     pub fn backdrop_blur(&self) -> Option<f32> {
         let context = self.style.resolve_context(

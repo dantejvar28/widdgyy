@@ -96,6 +96,44 @@ pub fn paint_shadows(node: &Node, transform: &Affine, canvas: &mut Scene) {
     }
 }
 
+/// Paint a `mask-image` gradient as an alpha mask. Gradient colours are
+/// converted to white with the stop's alpha so the luminance mask behaves like
+/// the CSS alpha mask.
+pub fn paint_mask_image(node: &Node, transform: &Affine, canvas: &mut Scene) {
+    let Some(crate::css::properties::background::BackgroundImage::Gradient(gradient)) =
+        node.mask_image()
+    else {
+        return;
+    };
+    let width = node.layout.width;
+    let height = node.layout.height;
+    let context = node
+        .style
+        .resolve_context(crate::css::Viewport::default(), width, height);
+    let stops = gradient
+        .stops
+        .iter()
+        .map(|stop| crate::css::values::gradient::ColorStop {
+            color: vello::peniko::Color::new([1.0, 1.0, 1.0, stop.color.components[3]]),
+            position: stop.position,
+        })
+        .collect();
+    let mask = crate::css::values::Gradient {
+        kind: gradient.kind.clone(),
+        stops,
+    };
+    if let Some(brush) = gradient_brush(&mask, width, height, &context) {
+        let rect = Rect::new(0.0, 0.0, width as f64, height as f64);
+        canvas.fill(
+            vello::peniko::Fill::NonZero,
+            *transform,
+            &brush,
+            None,
+            &rect,
+        );
+    }
+}
+
 pub fn paint_background(
     node: &Node,
     transform: &Affine,

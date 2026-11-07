@@ -80,6 +80,10 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str, current: Color) -
             decl.clip_path = parse_clip_path(value);
             true
         }
+        "mask-image" => {
+            decl.mask_image = parse_image(value, current);
+            true
+        }
         "isolation" => {
             decl.isolation = Some(value.eq_ignore_ascii_case("isolate"));
             true
@@ -145,6 +149,15 @@ fn parse_position(value: &str) -> (Length, Length) {
         x.unwrap_or(Length::Percent(50.0)),
         y.unwrap_or(Length::Percent(50.0)),
     )
+}
+
+fn parse_image(
+    value: &str,
+    current: Color,
+) -> Option<crate::css::properties::background::BackgroundImage> {
+    crate::css::properties::background::parse_image_list(value, current)
+        .into_iter()
+        .next()
 }
 
 fn parse_filter_list(value: &str, current: Color) -> Vec<Filter> {

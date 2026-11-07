@@ -85,7 +85,7 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str, current: Color) -
     }
 }
 
-fn parse_image_list(value: &str, current: Color) -> Vec<BackgroundImage> {
+pub(crate) fn parse_image_list(value: &str, current: Color) -> Vec<BackgroundImage> {
     let mut images = Vec::new();
     for part in split_commas(value) {
         let part = part.trim();

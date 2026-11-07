@@ -13,7 +13,7 @@
 
 use vello::Scene;
 use vello::kurbo::Affine;
-use vello::peniko::Mix;
+use vello::peniko::{BlendMode, Compose, Mix};
 
 use crate::css::properties::ClipPath;
 use crate::scene::{Node, NodeKind, Scene as StickerScene};
@@ -166,6 +166,10 @@ impl<'a> Painter<'a> {
         current: &mut Scene,
         layers: &mut Vec<FilterLayer>,
     ) {
+        if node.mask_image().is_some() {
+            self.paint_node(node, parent_visual, None, current);
+            return;
+        }
         if !node.visible || node.style.display == crate::css::Display::None {
             return;
         }
@@ -222,7 +226,10 @@ impl<'a> Painter<'a> {
                                 filter: Some(filter),
                             });
                         }
-                    } else if subtree_has_filter(child) && !layer.is_active() {
+                    } else if subtree_has_filter(child)
+                        && !layer.is_active()
+                        && child.mask_image().is_none()
+                    {
                         self.paint_node_layers(child, children_visual, current, layers);
                     } else {
                         self.paint_node(child, children_visual, None, current);
@@ -268,6 +275,16 @@ impl<'a> Painter<'a> {
         let box_rect = vello::kurbo::Rect::new(0.0, 0.0, width as f64, height as f64);
 
         let layer = effects_painter::begin_effects(node, &base, &box_rect, canvas);
+        let has_mask = node.mask_image().is_some();
+        if has_mask {
+            canvas.push_layer(
+                vello::peniko::Fill::NonZero,
+                BlendMode::new(Mix::Normal, Compose::SrcOver),
+                1.0,
+                base,
+                &box_rect,
+            );
+        }
 
         box_painter::paint_shadows(node, &base, canvas);
         box_painter::paint_background(node, &base, canvas, self.media);
@@ -287,6 +304,13 @@ impl<'a> Painter<'a> {
                     self.paint_node(&node.children[index], children_visual, skip_uid, canvas);
                 }
             }
+        }
+
+        if has_mask {
+            canvas.push_luminance_mask_layer(vello::peniko::Fill::NonZero, 1.0, base, &box_rect);
+            box_painter::paint_mask_image(node, &base, canvas);
+            canvas.pop_layer();
+            canvas.pop_layer();
         }
 
         effects_painter::end_effects(layer, canvas);
