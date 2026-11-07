@@ -3,7 +3,7 @@
 
 //! Grid template and placement properties.
 
-use super::{Declarations, GridAutoFlow, TrackSize, split_commas, split_ws};
+use super::{Declarations, GridAutoFlow, TrackSize, split_ws};
 use crate::css::values::Length;
 
 pub fn apply(decl: &mut Declarations, name: &str, value: &str) -> bool {
@@ -29,9 +29,9 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str) -> bool {
         }
         "grid-column" | "grid-column-start" | "grid-column-end" => {
             let (start, span) = parse_placement(value);
-            let current = decl.grid_column.unwrap_or((1, 1));
+            let current = decl.grid_column.unwrap_or((0, 0));
             if name == "grid-column-start" {
-                decl.grid_column = Some((start, current.1));
+                decl.grid_column = Some((start, current.1.max(1)));
             } else if name == "grid-column-end" {
                 decl.grid_column = Some((current.0, span.max(1)));
             } else {
@@ -41,9 +41,9 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str) -> bool {
         }
         "grid-row" | "grid-row-start" | "grid-row-end" => {
             let (start, span) = parse_placement(value);
-            let current = decl.grid_row.unwrap_or((1, 1));
+            let current = decl.grid_row.unwrap_or((0, 0));
             if name == "grid-row-start" {
-                decl.grid_row = Some((start, current.1));
+                decl.grid_row = Some((start, current.1.max(1)));
             } else if name == "grid-row-end" {
                 decl.grid_row = Some((current.0, span.max(1)));
             } else {
@@ -58,7 +58,7 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str) -> bool {
 
 fn parse_tracks(value: &str) -> Vec<TrackSize> {
     let mut tracks = Vec::new();
-    for part in split_commas(value) {
+    for part in split_tracks(value) {
         let part = part.trim();
         let lower = part.to_ascii_lowercase();
         if lower.starts_with("repeat(") && lower.ends_with(')') {
@@ -85,6 +85,37 @@ fn parse_tracks(value: &str) -> Vec<TrackSize> {
         }
     }
     tracks
+}
+
+/// Split a track list on top-level whitespace. Commas inside `repeat()` or
+/// `minmax()` stay part of their function.
+fn split_tracks(value: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = None;
+    for (index, character) in value.char_indices() {
+        match character {
+            '(' => {
+                depth += 1;
+                start.get_or_insert(index);
+            }
+            ')' => {
+                depth = depth.saturating_sub(1);
+            }
+            character if character.is_whitespace() && depth == 0 => {
+                if let Some(begin) = start.take() {
+                    parts.push(&value[begin..index]);
+                }
+            }
+            _ => {
+                start.get_or_insert(index);
+            }
+        }
+    }
+    if let Some(begin) = start {
+        parts.push(&value[begin..]);
+    }
+    parts
 }
 
 fn parse_track(value: &str) -> Option<TrackSize> {
@@ -121,10 +152,14 @@ fn parse_track(value: &str) -> Option<TrackSize> {
 
 fn parse_placement(value: &str) -> (i32, i32) {
     let tokens = split_ws(value);
-    let start = tokens
-        .first()
-        .and_then(|token| token.parse::<i32>().ok())
-        .unwrap_or(1);
+    let start = if value.trim().to_ascii_lowercase().starts_with("span ") {
+        0
+    } else {
+        tokens
+            .first()
+            .and_then(|token| token.parse::<i32>().ok())
+            .unwrap_or(0)
+    };
     let mut span = 1;
     if let Some(second) = tokens.get(1) {
         if let Some(number) = second.strip_prefix("span ") {

@@ -224,8 +224,8 @@ impl Default for GridStyle {
             columns: Vec::new(),
             rows: Vec::new(),
             auto_flow: GridAutoFlow::Row,
-            column: (1, 1),
-            row: (1, 1),
+            column: (0, 0),
+            row: (0, 0),
         }
     }
 }

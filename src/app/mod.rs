@@ -10,7 +10,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
@@ -28,8 +27,7 @@ use crate::css::{Axis, Overflow, Stylesheet, Viewport, Visibility};
 use crate::layout::LayoutEngine;
 use crate::render::media_painter::media_draw_rect;
 use crate::render::{
-    FilterLayer, MediaStore, Painter, ShadowDraw, VideoFrame, has_spatial_filter,
-    root_spatial_filter,
+    FilterLayer, MediaStore, Painter, ShadowDraw, VideoFrame, root_spatial_filter,
 };
 use crate::scene::{MediaKind, Node, NodeKind, Scene};
 use crate::text::TextEngine;
@@ -398,15 +396,12 @@ impl Runtime {
     /// Prepare the next frame. Fast path videos are drawn as a single wgpu
     /// texture; the Vello overlay is only re-rendered when its content changes.
     pub fn prepare_frame(&mut self) -> FramePlan {
-        log_nested_spatial_filters(&self.scene);
         // Spatial filters need offscreen layers, which the fast video
         // compositor cannot provide. Fall back to the full Vello path for such
         // scenes instead of regressing video playback for everyone else.
-        let has_filtered_root = self
-            .scene
-            .roots
-            .iter()
-            .any(|root| root_spatial_filter(root).is_some());
+        let has_filtered_root = self.scene.roots.iter().any(|root| {
+            root_spatial_filter(root).is_some() || crate::render::painter::subtree_has_filter(root)
+        });
         self.layers.clear();
 
         let candidate = self.background_video_node().and_then(|node| {
@@ -499,42 +494,9 @@ impl Runtime {
             };
         }
 
-        // Keep paint order: consecutive unfiltered roots share a scene, while
-        // each filtered root gets its own layer.
-        let mut indices: Vec<usize> = (0..self.scene.roots.len()).collect();
-        indices.sort_by_key(|index| self.scene.roots[*index].z_index);
-        let mut layers = Vec::with_capacity(indices.len());
-        let mut pending: Option<VelloScene> = None;
-        {
-            let mut painter = Painter::new(&mut self.text, &mut self.media);
-            for index in indices {
-                let root = &self.scene.roots[index];
-                if let Some(filter) = root_spatial_filter(root) {
-                    if let Some(scene) = pending.take() {
-                        layers.push(FilterLayer {
-                            scene,
-                            filter: None,
-                        });
-                    }
-                    let mut scene = VelloScene::new();
-                    painter.paint_root(root, &mut scene);
-                    layers.push(FilterLayer {
-                        scene,
-                        filter: Some(filter),
-                    });
-                } else {
-                    let scene = pending.get_or_insert_with(VelloScene::new);
-                    painter.paint_root(root, scene);
-                }
-            }
-        }
-        if let Some(scene) = pending.take() {
-            layers.push(FilterLayer {
-                scene,
-                filter: None,
-            });
-        }
-
+        let mut layers = Vec::with_capacity(self.scene.roots.len());
+        let mut painter = Painter::new(&mut self.text, &mut self.media);
+        painter.paint_layers(&self.scene, &mut layers);
         self.layers = layers;
         self.overlay_dirty = false;
         self.dirty = false;
@@ -675,26 +637,6 @@ fn fast_style_ok(node: &Node) -> bool {
         return false;
     }
     style.overflow_x == Overflow::Visible && style.overflow_y == Overflow::Visible
-}
-
-/// Nested spatial filters are not rendered offscreen yet. Warn once so a
-/// stylesheet using them does not fail silently.
-fn log_nested_spatial_filters(scene: &Scene) {
-    static CHECKED: AtomicBool = AtomicBool::new(false);
-    if CHECKED.swap(true, Ordering::Relaxed) {
-        return;
-    }
-    fn nested(node: &Node) -> bool {
-        node.children
-            .iter()
-            .any(|child| has_spatial_filter(&child.style.effects.filters) || nested(child))
-    }
-    if scene.roots.iter().any(nested) {
-        log::debug!(
-            "nested CSS blur()/drop-shadow() filters are unsupported; \
-             only root scene nodes are filtered"
-        );
-    }
 }
 
 fn load_stylesheet(path: &Path) -> Stylesheet {

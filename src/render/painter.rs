@@ -13,11 +13,14 @@
 
 use vello::Scene;
 use vello::kurbo::Affine;
+use vello::peniko::Mix;
 
+use crate::css::properties::ClipPath;
 use crate::scene::{Node, NodeKind, Scene as StickerScene};
 use crate::text::TextEngine;
 
 use super::ShadowDraw;
+use super::filter::{FilterLayer, root_spatial_filter};
 use super::media::MediaStore;
 use super::{box_painter, effects_painter, media_painter, text_painter};
 
@@ -122,6 +125,115 @@ impl<'a> Painter<'a> {
         }
     }
 
+    /// Paint a scene into filter layers, splitting at filtered descendants.
+    /// Unfiltered runs share a layer; each filtered subtree gets its own.
+    pub fn paint_layers(&mut self, sticker_scene: &StickerScene, layers: &mut Vec<FilterLayer>) {
+        let mut indices: Vec<usize> = (0..sticker_scene.roots.len()).collect();
+        indices.sort_by_key(|index| sticker_scene.roots[*index].z_index);
+        for index in indices {
+            let root = &sticker_scene.roots[index];
+            if let Some(filter) = root_spatial_filter(root) {
+                let mut scene = Scene::new();
+                self.paint_node(root, Affine::IDENTITY, None, &mut scene);
+                layers.push(FilterLayer {
+                    scene,
+                    filter: Some(filter),
+                });
+                continue;
+            }
+            if subtree_has_filter(root) && !has_active_effects(root) {
+                let mut current = Scene::new();
+                self.paint_node_layers(root, Affine::IDENTITY, &mut current, layers);
+                layers.push(FilterLayer {
+                    scene: current,
+                    filter: None,
+                });
+            } else {
+                let mut scene = Scene::new();
+                self.paint_node(root, Affine::IDENTITY, None, &mut scene);
+                layers.push(FilterLayer {
+                    scene,
+                    filter: None,
+                });
+            }
+        }
+    }
+
+    fn paint_node_layers(
+        &mut self,
+        node: &Node,
+        parent_visual: Affine,
+        current: &mut Scene,
+        layers: &mut Vec<FilterLayer>,
+    ) {
+        if !node.visible || node.style.display == crate::css::Display::None {
+            return;
+        }
+        let width = node.layout.width.max(0.0);
+        let height = node.layout.height.max(0.0);
+        if width <= 0.0 || height <= 0.0 {
+            return;
+        }
+
+        let context = node
+            .style
+            .resolve_context(crate::css::Viewport::default(), width, height);
+        let local = effects_painter::node_transform(node, &context);
+        let translate = Affine::translate((node.absolute_x as f64, node.absolute_y as f64));
+        let base = parent_visual * translate * local;
+        let children_visual = parent_visual
+            * translate
+            * local
+            * Affine::translate((-node.absolute_x as f64, -node.absolute_y as f64));
+        let box_rect = vello::kurbo::Rect::new(0.0, 0.0, width as f64, height as f64);
+        let layer = effects_painter::begin_effects(node, &base, &box_rect, current);
+
+        box_painter::paint_shadows(node, &base, current);
+        box_painter::paint_background(node, &base, current, self.media);
+        box_painter::paint_border(node, &base, current);
+
+        match &node.kind {
+            NodeKind::Text(_) => {
+                text_painter::paint_text(node, &base, current, self.text, self.inline_shadows);
+            }
+            NodeKind::Media(media) => {
+                media_painter::paint_media(node, media, &base, current, self.media);
+            }
+            NodeKind::Container => {
+                let mut indices: Vec<usize> = (0..node.children.len()).collect();
+                indices.sort_by_key(|index| node.children[*index].z_index);
+                for index in indices {
+                    let child = &node.children[index];
+                    let child_filter = root_spatial_filter(child);
+                    if let Some(filter) = child_filter {
+                        if layer.is_active() {
+                            // Splitting would close the parent's opacity/clip
+                            // layer in the wrong scene; paint it inline.
+                            self.paint_node(child, children_visual, None, current);
+                        } else {
+                            layers.push(FilterLayer {
+                                scene: std::mem::take(current),
+                                filter: None,
+                            });
+                            let mut scene = Scene::new();
+                            self.paint_node(child, children_visual, None, &mut scene);
+                            layers.push(FilterLayer {
+                                scene,
+                                filter: Some(filter),
+                            });
+                        }
+                    } else if subtree_has_filter(child) && !layer.is_active() {
+                        self.paint_node_layers(child, children_visual, current, layers);
+                    } else {
+                        self.paint_node(child, children_visual, None, current);
+                    }
+                }
+            }
+        }
+
+        effects_painter::end_effects(layer, current);
+    }
+
     fn paint_node(
         &mut self,
         node: &Node,
@@ -221,4 +333,19 @@ fn collect_node_shadows(node: &Node, draws: &mut Vec<ShadowDraw>) {
         }
         NodeKind::Media(_) => {}
     }
+}
+
+/// True when the node has a filtered descendant (its own filter is handled by
+/// the caller).
+pub fn subtree_has_filter(node: &Node) -> bool {
+    node.children.iter().any(|child| {
+        crate::render::has_spatial_filter(&child.style.effects.filters) || subtree_has_filter(child)
+    })
+}
+
+fn has_active_effects(node: &Node) -> bool {
+    node.opacity() < 0.999
+        || node.style.effects.mix_blend_mode != Mix::Normal
+        || node.style.effects.isolation
+        || !matches!(node.style.effects.clip_path, ClipPath::None)
 }

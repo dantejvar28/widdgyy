@@ -17,6 +17,12 @@ pub struct Layer {
     active: bool,
 }
 
+impl Layer {
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+}
+
 pub fn node_transform(node: &Node, context: &ResolveContext) -> Affine {
     if node.transform().is_empty()
         && node.style.effects.translate.is_none()

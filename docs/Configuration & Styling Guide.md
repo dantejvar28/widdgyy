@@ -297,7 +297,7 @@ Named colors, `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()`, `rgba()`, `hsl()`, `hsla(
 
 `display` (`block`, `inline`, `inline-block`, `flex`, `grid`, `none`), `width`, `height`, `min-width`, `min-height`, `max-width`, `max-height`, `margin*`, `padding*`, `box-sizing`, `overflow`, `overflow-x`, `overflow-y`, `aspect-ratio`, `visibility`.
 
-`position` and `top`/`right`/`bottom`/`left`/`inset` are parsed, but root placement is controlled by the JSON `anchor`/`offset_*` fields. Absolute-positioned children are not yet laid out out-of-flow.
+`position: absolute` and `position: fixed` take children out of flow and honor `top`/`right`/`bottom`/`left`/`inset`; `position: relative` shifts a child without affecting its siblings. Root placement is still controlled by the config `anchor`/`offset_*` fields.
 
 ### Background
 
@@ -323,7 +323,7 @@ If a family exists but does not ship the exact weight/style (common for display 
 
 `opacity`, `box-shadow` (outer and inset), `text-shadow`, `mix-blend-mode`, `filter` (color-matrix filters), individual `translate`/`rotate`/`scale`, `transform`, `transform-origin`, `clip-path` (inset/circle/ellipse/polygon/path), `isolation`, `object-fit`, `object-position`.
 
-`blur()` and `drop-shadow()` work on root-level nodes through an offscreen layer. Nested spatial filters, `backdrop-filter`, masks and border-image are still pending.
+`blur()` and `drop-shadow()` work on root nodes and on nested descendants: the painter splits the paint into layers at each filtered node. A filter inside an already-filtered subtree, or under a node with opacity/clip/isolation, is ignored. `backdrop-filter`, masks and border-image are still pending.
 
 `text-shadow` is rendered with a real GPU Gaussian blur on both the video and the no-video paths (see above). Only scenes with root-level spatial filters use the older sampled approximation.
 
@@ -331,7 +331,7 @@ If a family exists but does not ship the exact weight/style (common for display 
 
 `flex`, `flex-direction`, `flex-wrap`, `flex-flow`, `justify-content`, `align-items`, `align-content`, `align-self`, `gap`, `row-gap`, `column-gap`, `order`, `flex-grow`, `flex-shrink`, `flex-basis`.
 
-`flex-wrap` is parsed but the current layout engine places children on a single line. `flex-grow`/`flex-shrink` are parsed; explicit sizes/margins determine the current box sizes.
+`flex-wrap` creates multiple lines and respects `align-content`, `justify-content` per line and `align-items`. `flex-grow`/`flex-shrink` are parsed but not applied yet; explicit sizes and intrinsic widths determine box sizes.
 
 ### Grid
 
@@ -339,7 +339,7 @@ If a family exists but does not ship the exact weight/style (common for display 
 
 Track values: `auto`, `min-content`, `max-content`, `fit-content()`, `N fr`, `px`, `%`, `repeat()` and `minmax()`.
 
-Explicit `grid-column`/`grid-row` placement is parsed, but the layout engine currently auto-places children in row-major order.
+Explicit `grid-column`/`grid-row` placement (including spans and `span N`) and automatic placement in row-major or column-major order are supported. Track lists accept whitespace-separated values such as `100px 1fr auto` and `repeat(2, 1fr)`.
 
 ### Animation and transitions
 
@@ -361,7 +361,9 @@ Supported features: `min-width`, `max-width`, `min-height`, `max-height`, `orien
 
 These are parsed where possible but not painted yet, and are documented so they do not fail silently:
 
-- General `filter` / `backdrop-filter` effects (the values are parsed; only `mix-blend-mode`, opacity and shadows are rendered).
+- `backdrop-filter` (the values are parsed but the backdrop is not sampled).
+- Nested filters inside an already-filtered subtree or under opacity/clip/isolation.
+- `mask-image`, `border-image` and multiple background layers.
 - SVG external clip paths (`clip-path: url(...)`).
 - `@import`.
 - Animation property interpolation/transitions.

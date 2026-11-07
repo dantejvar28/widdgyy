@@ -143,3 +143,82 @@ fn flex_order_changes_layout_order() {
     assert!(children[1].layout.x < children[0].layout.x);
     assert!(children[0].layout.x < children[2].layout.x);
 }
+
+#[test]
+fn flex_wrap_places_items_on_new_lines() {
+    let css = Stylesheet::parse(
+        r#"
+        .root {
+            display: flex;
+            flex-wrap: wrap;
+            width: 200px;
+            height: 200px;
+        }
+        .item { width: 80px; height: 30px; }
+        "#,
+    );
+    let mut scene = Scene::new(Viewport::default());
+    let mut root = Node::container("hbox", vec!["root".to_string()]);
+    for _ in 0..3 {
+        root.children
+            .push(Node::container("text", vec!["item".to_string()]));
+    }
+    scene.roots.push(root);
+    let mut text = TextEngine::new();
+    scene.resolve_styles(&css);
+    scene.layout(&mut LayoutEngine::new(&mut text));
+
+    let root = &scene.roots[0];
+    assert_eq!(root.children[0].layout.x, 0.0);
+    assert_eq!(root.children[1].layout.x, 80.0);
+    assert_eq!(root.children[2].layout.x, 0.0);
+    assert_eq!(root.children[2].layout.y, 30.0);
+}
+
+#[test]
+fn grid_places_explicit_and_auto_items() {
+    let css = Stylesheet::parse(
+        r#"
+        .root {
+            display: grid;
+            width: 200px;
+            height: 200px;
+            grid-template-columns: 100px 100px;
+            grid-template-rows: 50px 50px;
+        }
+        .item { width: 20px; height: 20px; }
+        .second-column { grid-column: 2; grid-row: 1; }
+        .second-row { grid-column: 1; grid-row: 2; }
+        "#,
+    );
+    let mut scene = Scene::new(Viewport::default());
+    let mut root = Node::container("grid", vec!["root".to_string()]);
+    for class in ["item second-column", "item second-row", "item"] {
+        let classes = class.split_whitespace().map(str::to_string).collect();
+        root.children.push(Node::container("text", classes));
+    }
+    scene.roots.push(root);
+    let mut text = TextEngine::new();
+    scene.resolve_styles(&css);
+    scene.layout(&mut LayoutEngine::new(&mut text));
+
+    let root = &scene.roots[0];
+    println!("errors={:?}", css.errors);
+    println!("rules={}", css.rules.len());
+    println!(
+        "display={:?} columns={:?}",
+        root.style.display, root.style.grid.columns
+    );
+    for (index, child) in root.children.iter().enumerate() {
+        println!(
+            "child {index} grid={:?} layout={:?}",
+            child.style.grid, child.layout
+        );
+    }
+    assert_eq!(root.children[0].layout.x, 100.0);
+    assert_eq!(root.children[0].layout.y, 0.0);
+    assert_eq!(root.children[1].layout.x, 0.0);
+    assert_eq!(root.children[1].layout.y, 50.0);
+    assert_eq!(root.children[2].layout.x, 0.0);
+    assert_eq!(root.children[2].layout.y, 0.0);
+}

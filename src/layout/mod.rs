@@ -11,7 +11,8 @@ use crate::css::Viewport;
 use crate::css::computed::ComputedStyle;
 use crate::css::properties::media_object_fit::ObjectFit;
 use crate::css::properties::{
-    AlignItems, Display, FlexDirection, JustifyContent, Position, TrackSize,
+    AlignContent, AlignItems, Display, FlexDirection, FlexWrap, GridAutoFlow, JustifyContent,
+    Position, TrackSize,
 };
 use crate::css::values::{Axis, Edges, ResolveContext};
 use crate::scene::{Node, NodeKind};
@@ -302,13 +303,10 @@ impl<'a> LayoutEngine<'a> {
             FlexDirection::RowReverse | FlexDirection::ColumnReverse
         );
         let context = viewport.context(style.text.font_size_px, available_width, available_height);
-        let horizontal_padding = style.padding.resolve(&context, Axis::Horizontal);
-        let vertical_padding = style.padding.resolve(&context, Axis::Vertical);
-        let horizontal_border = style.border.widths.resolve(&context, Axis::Horizontal);
-        let vertical_border = style.border.widths.resolve(&context, Axis::Vertical);
-
-        let child_available_width = available_width.max(0.0);
-        let child_available_height = available_height.max(0.0);
+        let padding = style.padding.resolve(&context, Axis::Horizontal);
+        let border = style.border.widths.resolve(&context, Axis::Horizontal);
+        let horizontal_extra = padding.left + padding.right + border.left + border.right;
+        let vertical_extra = padding.top + padding.bottom + border.top + border.bottom;
 
         let mut flow_indices: Vec<usize> = (0..node.children.len())
             .filter(|index| !out_of_flow(&node.children[*index]))
@@ -318,131 +316,190 @@ impl<'a> LayoutEngine<'a> {
             flow_indices.reverse();
         }
 
+        // Flex items keep their measured size. Grow/shrink are not applied to
+        // text yet, so explicit sizes and intrinsic widths determine a line.
         for index in &flow_indices {
             self.layout_node(
                 &mut node.children[*index],
                 viewport,
-                child_available_width,
-                child_available_height,
+                available_width.max(0.0),
+                available_height.max(0.0),
             );
         }
 
-        let gap = if is_row {
+        let main_gap = if is_row {
             style.flex.column_gap.resolve(&context, Axis::Horizontal)
         } else {
             style.flex.row_gap.resolve(&context, Axis::Vertical)
         }
         .max(0.0);
-        let gap_total = gap * (flow_indices.len().saturating_sub(1)) as f32;
-        let flow_children: Vec<&Node> = flow_indices
+        let cross_gap = if is_row {
+            style.flex.row_gap.resolve(&context, Axis::Vertical)
+        } else {
+            style.flex.column_gap.resolve(&context, Axis::Horizontal)
+        }
+        .max(0.0);
+
+        let main_size = |child: &Node| {
+            if is_row {
+                child.layout.margin.left + child.layout.width + child.layout.margin.right
+            } else {
+                child.layout.margin.top + child.layout.height + child.layout.margin.bottom
+            }
+        };
+        let cross_size = |child: &Node| {
+            if is_row {
+                child.layout.margin.top + child.layout.height + child.layout.margin.bottom
+            } else {
+                child.layout.margin.left + child.layout.width + child.layout.margin.right
+            }
+        };
+
+        let container_main = explicit_content_width
+            .or_else(|| {
+                let available = if is_row {
+                    available_width - horizontal_extra
+                } else {
+                    available_height - vertical_extra
+                };
+                Some(available.max(0.0))
+            })
+            .unwrap_or(0.0);
+
+        // Group into flex lines. Without wrapping this is one line.
+        let wraps = !matches!(style.flex.wrap, FlexWrap::NoWrap);
+        let mut lines: Vec<Vec<usize>> = Vec::new();
+        let mut line: Vec<usize> = Vec::new();
+        let mut line_main = 0.0;
+        for index in flow_indices {
+            let size = main_size(&node.children[index]);
+            let advance = size + if line.is_empty() { 0.0 } else { main_gap };
+            if wraps && !line.is_empty() && line_main + advance > container_main {
+                lines.push(std::mem::take(&mut line));
+                line_main = 0.0;
+            }
+            line_main += size + if line.is_empty() { 0.0 } else { main_gap };
+            line.push(index);
+        }
+        if !line.is_empty() {
+            lines.push(line);
+        }
+        if matches!(style.flex.wrap, FlexWrap::WrapReverse) {
+            lines.reverse();
+        }
+
+        let line_cross: Vec<f32> = lines
             .iter()
-            .map(|index| &node.children[*index])
+            .map(|line| {
+                line.iter()
+                    .map(|index| cross_size(&node.children[*index]))
+                    .fold(0.0, f32::max)
+            })
             .collect();
-
-        let (intrinsic_main, intrinsic_cross) = if is_row {
-            let main = flow_children
-                .iter()
-                .map(|child| {
-                    child.layout.margin.left + child.layout.width + child.layout.margin.right
-                })
-                .sum::<f32>()
-                + gap_total;
-            let cross = flow_children
-                .iter()
-                .map(|child| {
-                    child.layout.margin.top + child.layout.height + child.layout.margin.bottom
-                })
-                .fold(0.0, f32::max);
-            (main, cross)
-        } else {
-            let main = flow_children
-                .iter()
-                .map(|child| {
-                    child.layout.margin.top + child.layout.height + child.layout.margin.bottom
-                })
-                .sum::<f32>()
-                + gap_total;
-            let cross = flow_children
-                .iter()
-                .map(|child| {
-                    child.layout.margin.left + child.layout.width + child.layout.margin.right
-                })
-                .fold(0.0, f32::max);
-            (main, cross)
-        };
-
-        let content_main = if is_row {
-            explicit_content_width.unwrap_or(intrinsic_main)
-        } else {
-            explicit_content_height.unwrap_or(intrinsic_main)
-        };
+        let lines_count = lines.len();
+        let total_cross =
+            line_cross.iter().sum::<f32>() + cross_gap * (lines_count.saturating_sub(1)) as f32;
         let content_cross = if is_row {
-            explicit_content_height.unwrap_or(intrinsic_cross)
+            explicit_content_height.unwrap_or(total_cross)
         } else {
-            explicit_content_width.unwrap_or(intrinsic_cross)
+            explicit_content_width.unwrap_or(total_cross)
         };
-
-        let free = (content_main - intrinsic_main).max(0.0);
-        let (mut cursor, extra_gap) = match style.flex.justify {
-            JustifyContent::Start => (0.0, 0.0),
-            JustifyContent::End => (free, 0.0),
-            JustifyContent::Center => (free / 2.0, 0.0),
-            JustifyContent::SpaceBetween => {
-                if flow_indices.len() > 1 {
-                    (0.0, free / (flow_indices.len() - 1) as f32)
+        let content_main = if is_row {
+            explicit_content_width.unwrap_or(container_main)
+        } else {
+            explicit_content_height.unwrap_or(container_main)
+        };
+        let free_cross = (content_cross - total_cross).max(0.0);
+        let (mut cross_cursor, line_extra) = match style.flex.align_content {
+            AlignContent::Start | AlignContent::Stretch => (0.0, 0.0),
+            AlignContent::End => (free_cross, 0.0),
+            AlignContent::Center => (free_cross / 2.0, 0.0),
+            AlignContent::SpaceBetween => {
+                if lines_count > 1 {
+                    (0.0, free_cross / (lines_count - 1) as f32)
                 } else {
                     (0.0, 0.0)
                 }
             }
-            JustifyContent::SpaceAround => {
-                if flow_indices.is_empty() {
+            AlignContent::SpaceAround => {
+                if lines_count == 0 {
                     (0.0, 0.0)
                 } else {
-                    let each = free / flow_indices.len() as f32;
+                    let each = free_cross / lines_count as f32;
                     (each / 2.0, each)
                 }
             }
-            JustifyContent::SpaceEvenly => {
-                if flow_indices.is_empty() {
+            AlignContent::SpaceEvenly => {
+                if lines_count == 0 {
                     (0.0, 0.0)
                 } else {
-                    let each = free / (flow_indices.len() + 1) as f32;
+                    let each = free_cross / (lines_count + 1) as f32;
                     (each, each)
                 }
             }
         };
 
-        let content_offset_x = horizontal_border.left + horizontal_padding.left;
-        let content_offset_y = vertical_border.top + vertical_padding.top;
+        let content_offset_x = border.left + padding.left;
+        let content_offset_y = border.top + padding.top;
 
-        for index in flow_indices {
-            let child = &mut node.children[index];
-            let cross_start = child.layout.margin.top_or(is_row);
-            let cross_size = if is_row {
-                child.layout.height
-            } else {
-                child.layout.width
+        for (line_index, line) in lines.iter().enumerate() {
+            let line_main_total = line
+                .iter()
+                .map(|index| main_size(&node.children[*index]))
+                .sum::<f32>()
+                + main_gap * (line.len().saturating_sub(1)) as f32;
+            let free_main = (content_main - line_main_total).max(0.0);
+            let (mut cursor, extra_gap) = match style.flex.justify {
+                JustifyContent::Start => (0.0, 0.0),
+                JustifyContent::End => (free_main, 0.0),
+                JustifyContent::Center => (free_main / 2.0, 0.0),
+                JustifyContent::SpaceBetween => {
+                    if line.len() > 1 {
+                        (0.0, free_main / (line.len() - 1) as f32)
+                    } else {
+                        (0.0, 0.0)
+                    }
+                }
+                JustifyContent::SpaceAround => {
+                    if line.is_empty() {
+                        (0.0, 0.0)
+                    } else {
+                        let each = free_main / line.len() as f32;
+                        (each / 2.0, each)
+                    }
+                }
+                JustifyContent::SpaceEvenly => {
+                    if line.is_empty() {
+                        (0.0, 0.0)
+                    } else {
+                        let each = free_main / (line.len() + 1) as f32;
+                        (each, each)
+                    }
+                }
             };
-            let align = effective_align(&style, child);
-            let cross_offset = match align {
-                AlignItems::Start | AlignItems::Baseline => 0.0,
-                AlignItems::End => (content_cross - cross_size).max(0.0),
-                AlignItems::Center => ((content_cross - cross_size) / 2.0).max(0.0),
-                AlignItems::Stretch => 0.0,
-            };
-            if is_row {
-                child.layout.x = content_offset_x + cursor + child.layout.margin.left;
-                child.layout.y = content_offset_y + cross_start + cross_offset;
-            } else {
-                child.layout.y = content_offset_y + cursor + child.layout.margin.top;
-                child.layout.x = content_offset_x + cross_start + cross_offset;
+
+            let line_height = line_cross[line_index];
+            for index in line {
+                let child = &mut node.children[*index];
+                let align = effective_align(&style, child);
+                let child_cross = cross_size(child);
+                let cross_offset = match align {
+                    AlignItems::Start | AlignItems::Baseline | AlignItems::Stretch => 0.0,
+                    AlignItems::End => (line_height - child_cross).max(0.0),
+                    AlignItems::Center => ((line_height - child_cross) / 2.0).max(0.0),
+                };
+                if is_row {
+                    child.layout.x = content_offset_x + cursor + child.layout.margin.left;
+                    child.layout.y =
+                        content_offset_y + cross_cursor + cross_offset + child.layout.margin.top;
+                } else {
+                    child.layout.y = content_offset_y + cursor + child.layout.margin.top;
+                    child.layout.x =
+                        content_offset_x + cross_cursor + cross_offset + child.layout.margin.left;
+                }
+                cursor += main_size(child) + main_gap + extra_gap;
             }
-            let advance = if is_row {
-                child.layout.margin.left + child.layout.width + child.layout.margin.right
-            } else {
-                child.layout.margin.top + child.layout.height + child.layout.margin.bottom
-            };
-            cursor += advance + gap + extra_gap;
+            cross_cursor += line_height + cross_gap + line_extra;
         }
 
         if is_row {
@@ -468,27 +525,128 @@ impl<'a> LayoutEngine<'a> {
         let content_available_width = available_width.max(0.0);
         let content_available_height = available_height.max(0.0);
 
-        let columns = style.grid.columns.len().max(1);
-        let rows = node.children.len().div_ceil(columns);
-
-        for child in &mut node.children {
+        let flow_indices: Vec<usize> = (0..node.children.len())
+            .filter(|index| !out_of_flow(&node.children[*index]))
+            .collect();
+        for index in &flow_indices {
             self.layout_node(
-                child,
+                &mut node.children[*index],
                 viewport,
                 content_available_width,
                 content_available_height,
             );
         }
 
+        let mut columns = style.grid.columns.len().max(1);
+        let mut rows = 1usize;
+        for index in &flow_indices {
+            let (column, row) = (
+                &node.children[*index].style.grid.column,
+                &node.children[*index].style.grid.row,
+            );
+            if column.0 > 0 {
+                columns =
+                    columns.max((column.0 as usize).saturating_sub(1) + column.1.max(1) as usize);
+            }
+            if row.0 > 0 {
+                rows = rows.max((row.0 as usize).saturating_sub(1) + row.1.max(1) as usize);
+            }
+        }
+        if matches!(
+            style.grid.auto_flow,
+            GridAutoFlow::Row | GridAutoFlow::RowDense
+        ) {
+            rows = rows.max(flow_indices.len().div_ceil(columns));
+        } else {
+            columns = columns.max(flow_indices.len().div_ceil(rows));
+        }
+
+        let mut occupied = vec![vec![false; columns]; rows];
+        let mut placements: Vec<Option<(usize, usize, usize, usize)>> =
+            vec![None; node.children.len()];
+
+        // Explicit placement first.
+        for index in &flow_indices {
+            let (column, row) = (
+                &node.children[*index].style.grid.column,
+                &node.children[*index].style.grid.row,
+            );
+            if column.0 <= 0 && row.0 <= 0 {
+                continue;
+            }
+            let col = (column.0.max(1) as usize - 1).min(columns - 1);
+            let row_index = (row.0.max(1) as usize - 1).min(rows - 1);
+            let col_span = (column.1.max(1) as usize).min(columns - col);
+            let row_span = (row.1.max(1) as usize).min(rows - row_index);
+            placements[*index] = Some((col, row_index, col_span, row_span));
+            for row in &mut occupied[row_index..row_index + row_span] {
+                for cell in &mut row[col..col + col_span] {
+                    *cell = true;
+                }
+            }
+        }
+
+        // Auto placement in row-major or column-major order.
+        let column_major = matches!(
+            style.grid.auto_flow,
+            GridAutoFlow::Column | GridAutoFlow::ColumnDense
+        );
+        let mut candidates: Vec<(usize, usize)> = Vec::new();
+        if column_major {
+            for x in 0..columns {
+                for y in 0..rows {
+                    candidates.push((y, x));
+                }
+            }
+        } else {
+            for y in 0..rows {
+                for x in 0..columns {
+                    candidates.push((y, x));
+                }
+            }
+        }
+        for index in &flow_indices {
+            if placements[*index].is_some() {
+                continue;
+            }
+            let (column, row) = (
+                &node.children[*index].style.grid.column,
+                &node.children[*index].style.grid.row,
+            );
+            let col_span = column.1.max(1) as usize;
+            let row_span = row.1.max(1) as usize;
+            let Some(&(y, x)) = candidates.iter().find(|(y, x)| {
+                *y + row_span <= rows
+                    && *x + col_span <= columns
+                    && (0..row_span).all(|dy| (0..col_span).all(|dx| !occupied[y + dy][x + dx]))
+            }) else {
+                continue;
+            };
+            placements[*index] = Some((x, y, col_span, row_span));
+            for row in &mut occupied[y..y + row_span] {
+                for cell in &mut row[x..x + col_span] {
+                    *cell = true;
+                }
+            }
+        }
+
         let mut column_widths = vec![0.0_f32; columns];
         let mut row_heights = vec![0.0_f32; rows];
-        for (index, child) in node.children.iter().enumerate() {
-            let column = index % columns;
-            let row = index / columns;
-            column_widths[column] = column_widths[column]
-                .max(child.layout.margin.left + child.layout.width + child.layout.margin.right);
-            row_heights[row] = row_heights[row]
-                .max(child.layout.margin.top + child.layout.height + child.layout.margin.bottom);
+        for (index, placement) in placements.iter().enumerate() {
+            let Some((col, row, col_span, row_span)) = placement else {
+                continue;
+            };
+            let child = &node.children[index];
+            let width = child.layout.margin.left + child.layout.width + child.layout.margin.right;
+            let height = child.layout.margin.top + child.layout.height + child.layout.margin.bottom;
+            let per_column = width / *col_span as f32;
+            let per_row = height / *row_span as f32;
+            for width in &mut column_widths[*col..col + col_span] {
+                *width = width.max(per_column);
+            }
+            for height in &mut row_heights[*row..row + row_span] {
+                *height = height.max(per_row);
+            }
         }
 
         let track_basis_width = explicit_content_width.unwrap_or(content_available_width);
@@ -517,17 +675,19 @@ impl<'a> LayoutEngine<'a> {
         let column_gap = style.flex.column_gap.resolve(&context, Axis::Horizontal);
         let row_gap = style.flex.row_gap.resolve(&context, Axis::Vertical);
 
-        for (index, child) in node.children.iter_mut().enumerate() {
-            let column = index % columns;
-            let row = index / columns;
+        for (index, placement) in placements.iter().enumerate() {
+            let Some((column, row, _, _)) = placement else {
+                continue;
+            };
+            let child = &mut node.children[index];
             let x = border.left
                 + padding.left
-                + column_widths[..column].iter().sum::<f32>()
-                + column as f32 * column_gap;
+                + column_widths[..*column].iter().sum::<f32>()
+                + *column as f32 * column_gap;
             let y = border.top
                 + padding.top
-                + row_heights[..row].iter().sum::<f32>()
-                + row as f32 * row_gap;
+                + row_heights[..*row].iter().sum::<f32>()
+                + *row as f32 * row_gap;
             child.layout.x = x + child.layout.margin.left;
             child.layout.y = y + child.layout.margin.top;
         }
@@ -546,16 +706,6 @@ fn effective_align(style: &ComputedStyle, child: &Node) -> AlignItems {
     match child.style.flex.align_self {
         AlignItems::Start => style.flex.align_items,
         other => other,
-    }
-}
-
-trait MarginStart {
-    fn top_or(&self, is_row: bool) -> f32;
-}
-
-impl MarginStart for Edges<f32> {
-    fn top_or(&self, is_row: bool) -> f32 {
-        if is_row { self.top } else { self.left }
     }
 }
 
