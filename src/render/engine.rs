@@ -12,13 +12,14 @@ use vello::peniko::Color;
 use vello::{AaConfig, RenderParams, Renderer as VelloRenderer, RendererOptions, Scene};
 use wgpu::util::TextureBlitter;
 use wgpu::{
-    CompositeAlphaMode, Device, Instance, PresentMode, Queue, Surface, SurfaceConfiguration,
-    Texture, TextureFormat, TextureUsages, TextureView,
+    CompositeAlphaMode, Device, Instance, PresentMode, Queue, RenderPassColorAttachment,
+    RenderPassDescriptor, Surface, SurfaceConfiguration, Texture, TextureFormat, TextureUsages,
+    TextureView,
 };
 
 use super::ShadowDraw;
 use super::compositor::{Compositor, MAX_SHADOW_ITEMS, MAX_SHADOW_SLOTS, ShadowItem, VideoFrame};
-use super::filter::{ExternalLayerSpec, FilterCompositor, FilterLayer, SpatialFilter};
+use super::filter::{FilterCompositor, FilterLayer, LayerItem, LayerSpec, SpatialFilter};
 
 pub struct GpuRenderer {
     pub device: Device,
@@ -39,6 +40,11 @@ pub struct GpuRenderer {
     backdrop_blur_view: TextureView,
     target: Texture,
     target_view: TextureView,
+    /// Accumulation textures for nested layer groups, allocated lazily per
+    /// nesting depth and reused across frames.
+    accum: Vec<TextureView>,
+    /// Scratch mask for group clip paths, allocated on first use.
+    clip_mask: Option<TextureView>,
     blitter: TextureBlitter,
     width: u32,
     height: u32,
@@ -178,6 +184,8 @@ impl GpuRenderer {
             backdrop_blur_view,
             target,
             target_view,
+            accum: Vec::new(),
+            clip_mask: None,
             blitter,
             width,
             height,
@@ -236,6 +244,8 @@ impl GpuRenderer {
         );
         self.backdrop_blur = blur;
         self.backdrop_blur_view = blur_view;
+        self.accum.clear();
+        self.clip_mask = None;
     }
 
     pub fn size(&self) -> (u32, u32) {
@@ -372,18 +382,20 @@ impl GpuRenderer {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("widdgyy backdrop blur"),
                 });
-            self.backdrop_filter.encode_source_layer(
-                &self.device,
+            self.backdrop_filter.encode_composite(
                 &self.queue,
                 &mut encoder,
-                ExternalLayerSpec {
+                &self.backdrop_blur_view,
+                LayerSpec {
                     source: &self.backdrop_source_view,
-                    target: &self.backdrop_blur_view,
-                    filter: SpatialFilter::Blur {
+                    filter: Some(SpatialFilter::Blur {
                         radius: radius * crate::app::BACKDROP_MASK_SCALE as f32,
-                    },
-                    clear: true,
+                    }),
+                    opacity: 1.0,
+                    mask: None,
+                    source_premultiplied: false,
                 },
+                true,
             );
             self.queue.submit(Some(encoder.finish()));
             self.compositor.set_backdrop(
@@ -443,42 +455,18 @@ impl GpuRenderer {
         Ok(())
     }
 
-    /// Rasterize root layers in paint order. Filtered layers go through the
-    /// offscreen blur/drop-shadow passes; unfiltered runs are composited
-    /// directly. The accumulated target is then blitted to the surface.
+    /// Rasterize root layers in paint order. Nested groups recurse into
+    /// per-depth accumulation textures, so filters keep working under
+    /// opacity, clip-path, isolation and other filters.
     pub fn render_layers(&mut self, layers: &[FilterLayer]) -> Result<()> {
         if layers.is_empty() {
             return Ok(());
         }
-        let params = RenderParams {
-            base_color: Color::new([0.0, 0.0, 0.0, 0.0]),
-            width: self.width,
-            height: self.height,
-            antialiasing_method: AaConfig::Area,
-        };
-        for (index, layer) in layers.iter().enumerate() {
-            self.vello
-                .render_to_texture(
-                    &self.device,
-                    &self.queue,
-                    &layer.scene,
-                    self.filter.layer_view(),
-                    &params,
-                )
-                .context("Vello filter layer rasterization")?;
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("widdgyy filter composite"),
-                });
-            self.filter.encode_layer(
-                &self.queue,
-                &mut encoder,
-                &self.target_view,
-                layer.filter,
-                index == 0,
-            );
-            self.queue.submit(Some(encoder.finish()));
+        let target = self.target_view.clone();
+        let mut clear = true;
+        for layer in layers {
+            self.render_layer(layer, 0, &target, clear)?;
+            clear = false;
         }
 
         let Some(frame) = self.acquire_surface() else {
@@ -497,6 +485,220 @@ impl GpuRenderer {
         self.queue.submit(Some(encoder.finish()));
         self.queue.present(frame);
         Ok(())
+    }
+
+    /// Composite one layer into `target`. A layer with a single scene uses the
+    /// shared scratch texture; anything with nested items accumulates into a
+    /// depth-specific texture first.
+    fn render_layer(
+        &mut self,
+        layer: &FilterLayer,
+        depth: usize,
+        target: &TextureView,
+        clear: bool,
+    ) -> Result<()> {
+        if layer.items.is_empty() {
+            if clear {
+                self.clear_view(target);
+            }
+            return Ok(());
+        }
+        if depth >= MAX_FILTER_DEPTH {
+            warn_depth_limit();
+            return self.render_layer_flat(layer, target, clear);
+        }
+        if layer.items.len() == 1
+            && let LayerItem::Scene(scene) = &layer.items[0]
+        {
+            let scratch = self.filter.layer_view().clone();
+            self.render_scene(scene, &scratch)?;
+            return self.composite_layer(&scratch, target, layer, false, clear);
+        }
+
+        let accum = self.accum_view(depth);
+        let mut first = true;
+        for item in &layer.items {
+            match item {
+                LayerItem::Scene(scene) => {
+                    let scratch = self.filter.layer_view().clone();
+                    self.render_scene(scene, &scratch)?;
+                    self.composite_plain(&scratch, &accum, false, first)?;
+                }
+                LayerItem::Layer(child) => {
+                    self.render_layer(child, depth + 1, &accum, first)?;
+                }
+            }
+            first = false;
+        }
+        self.composite_layer(&accum, target, layer, true, clear)
+    }
+
+    /// Last-resort painter for trees deeper than the accumulation pool. It
+    /// keeps content and paint order but drops the group effects.
+    fn render_layer_flat(
+        &mut self,
+        layer: &FilterLayer,
+        target: &TextureView,
+        clear: bool,
+    ) -> Result<()> {
+        if layer.items.is_empty() {
+            if clear {
+                self.clear_view(target);
+            }
+            return Ok(());
+        }
+        let mut first = clear;
+        for item in &layer.items {
+            match item {
+                LayerItem::Scene(scene) => {
+                    let scratch = self.filter.layer_view().clone();
+                    self.render_scene(scene, &scratch)?;
+                    self.composite_plain(&scratch, target, false, first)?;
+                }
+                LayerItem::Layer(child) => {
+                    self.render_layer_flat(child, target, first)?;
+                }
+            }
+            first = false;
+        }
+        Ok(())
+    }
+
+    fn composite_layer(
+        &mut self,
+        source: &TextureView,
+        target: &TextureView,
+        layer: &FilterLayer,
+        source_premultiplied: bool,
+        clear: bool,
+    ) -> Result<()> {
+        let mask = match &layer.mask {
+            Some(scene) => {
+                let view = self.clip_mask_view();
+                self.render_scene(scene, &view)?;
+                Some(view)
+            }
+            None => None,
+        };
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("widdgyy layer composite"),
+            });
+        self.filter.encode_composite(
+            &self.queue,
+            &mut encoder,
+            target,
+            LayerSpec {
+                source,
+                filter: layer.filter,
+                opacity: layer.opacity,
+                mask: mask.as_ref(),
+                source_premultiplied,
+            },
+            clear,
+        );
+        self.queue.submit(Some(encoder.finish()));
+        Ok(())
+    }
+
+    fn composite_plain(
+        &mut self,
+        source: &TextureView,
+        target: &TextureView,
+        source_premultiplied: bool,
+        clear: bool,
+    ) -> Result<()> {
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("widdgyy layer item"),
+            });
+        self.filter.encode_composite(
+            &self.queue,
+            &mut encoder,
+            target,
+            LayerSpec {
+                source,
+                filter: None,
+                opacity: 1.0,
+                mask: None,
+                source_premultiplied,
+            },
+            clear,
+        );
+        self.queue.submit(Some(encoder.finish()));
+        Ok(())
+    }
+
+    fn render_scene(&mut self, scene: &Scene, target: &TextureView) -> Result<()> {
+        let params = RenderParams {
+            base_color: Color::new([0.0, 0.0, 0.0, 0.0]),
+            width: self.width,
+            height: self.height,
+            antialiasing_method: AaConfig::Area,
+        };
+        self.vello
+            .render_to_texture(&self.device, &self.queue, scene, target, &params)
+            .context("Vello layer rasterization")
+    }
+
+    fn accum_view(&mut self, depth: usize) -> TextureView {
+        while self.accum.len() <= depth {
+            let (texture, view) = create_backdrop_texture(
+                &self.device,
+                "widdgyy filter group",
+                self.width,
+                self.height,
+                TextureFormat::Rgba8Unorm,
+                TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+            );
+            // The view keeps the texture alive; this drops the extra handle.
+            drop(texture);
+            self.accum.push(view);
+        }
+        self.accum[depth].clone()
+    }
+
+    fn clip_mask_view(&mut self) -> TextureView {
+        if self.clip_mask.is_none() {
+            let (texture, view) = create_backdrop_texture(
+                &self.device,
+                "widdgyy clip mask",
+                self.width,
+                self.height,
+                TextureFormat::Rgba8Unorm,
+                TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
+            );
+            drop(texture);
+            self.clip_mask = Some(view);
+        }
+        self.clip_mask.clone().expect("clip mask initialized")
+    }
+
+    fn clear_view(&self, target: &TextureView) {
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("widdgyy layer clear"),
+            });
+        let _ = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("widdgyy layer clear"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        self.queue.submit(Some(encoder.finish()));
     }
 
     fn acquire_surface(&mut self) -> Option<wgpu::SurfaceTexture> {
@@ -549,6 +751,20 @@ fn create_target(device: &Device, width: u32, height: u32) -> (Texture, TextureV
 
 /// Shadow sigma below which the mask is composited without blur.
 const HARD_SHADOW_SIGMA: f32 = 0.5;
+
+/// Maximum nesting depth for offscreen layer groups.
+const MAX_FILTER_DEPTH: usize = 8;
+
+static DEPTH_LIMIT_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn warn_depth_limit() {
+    if !DEPTH_LIMIT_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        log::warn!(
+            "layer nesting exceeds {MAX_FILTER_DEPTH}; deeper group effects are composited flat"
+        );
+    }
+}
 
 fn shadow_extent(width: u32, height: u32) -> (u32, u32) {
     (

@@ -5,9 +5,10 @@
 //
 // Vello writes straight (unpremultiplied) alpha into the layer texture. The
 // separable blur converts to premultiplied alpha before filtering so colour
-// does not bleed out of transparent pixels. The composite pass writes
-// premultiplied colour, which is what the final blit to the premultiplied
-// surface expects.
+// does not bleed out of transparent pixels. Layer groups already store
+// premultiplied colour, so their passes skip that conversion. The composite
+// pass writes premultiplied colour, which is what the final blit to the
+// premultiplied surface expects.
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -31,7 +32,9 @@ fn vs_main(@builtin(vertex_index) index: u32) -> VertexOutput {
 
 struct BlurParams {
     step: vec2<f32>,
-    _pad: vec2<f32>,
+    /// 1 when the source stores straight alpha and must be premultiplied.
+    straight: f32,
+    _pad: f32,
 };
 
 @group(0) @binding(0) var blur_source: texture_2d<f32>;
@@ -52,13 +55,13 @@ const BLUR_WEIGHTS = array<f32, 9>(
     0.0038155288,
 );
 
-fn blur_sample(uv: vec2<f32>, step: vec2<f32>, premultiply: bool) -> vec4<f32> {
+fn blur_sample(uv: vec2<f32>, step: vec2<f32>, straight: bool) -> vec4<f32> {
     var sum = vec4<f32>(0.0);
     for (var i = 0u; i < 9u; i += 1u) {
         let offset = step * f32(i);
         var a = textureSample(blur_source, blur_sampler, uv + offset);
         var b = textureSample(blur_source, blur_sampler, uv - offset);
-        if premultiply {
+        if straight {
             a = vec4<f32>(a.rgb * a.a, a.a);
             b = vec4<f32>(b.rgb * b.a, b.a);
         }
@@ -71,10 +74,10 @@ fn blur_sample(uv: vec2<f32>, step: vec2<f32>, premultiply: bool) -> vec4<f32> {
     return sum;
 }
 
-/// First blur pass: straight-alpha layer -> premultiplied blur target.
+/// First blur pass: straight or premultiplied layer -> premultiplied target.
 @fragment
 fn fs_premultiply(input: VertexOutput) -> @location(0) vec4<f32> {
-    return blur_sample(input.uv, blur_params.step, true);
+    return blur_sample(input.uv, blur_params.step, blur_params.straight > 0.5);
 }
 
 /// Second blur pass: premultiplied blur target -> premultiplied blur target.
@@ -86,14 +89,19 @@ fn fs_blur(input: VertexOutput) -> @location(0) vec4<f32> {
 struct CompositeParams {
     shadow_color: vec4<f32>,
     offset: vec2<f32>,
+    /// 0 = unfiltered layer, 1 = blurred content, 2 = drop shadow.
     mode: f32,
     premultiplied: f32,
+    opacity: f32,
+    has_mask: f32,
+    _pad: vec2<f32>,
 };
 
 @group(0) @binding(0) var layer_source: texture_2d<f32>;
 @group(0) @binding(1) var blur_result: texture_2d<f32>;
 @group(0) @binding(2) var composite_sampler: sampler;
 @group(0) @binding(3) var<uniform> composite_params: CompositeParams;
+@group(0) @binding(4) var mask_source: texture_2d<f32>;
 
 fn premultiplied(source: vec4<f32>, already: bool) -> vec4<f32> {
     if already {
@@ -110,22 +118,36 @@ fn fs_composite(input: VertexOutput) -> @location(0) vec4<f32> {
         composite_params.premultiplied > 0.5,
     );
 
-    // 0 = unfiltered layer, 1 = blurred content, 2 = drop shadow.
+    var result: vec4<f32>;
     if composite_params.mode < 0.5 {
-        return source;
+        result = source;
+    } else {
+        let blurred = textureSample(
+            blur_result,
+            composite_sampler,
+            uv - composite_params.offset,
+        );
+        if composite_params.mode < 1.5 {
+            result = blurred;
+        } else {
+            // Drop shadow: tint the blurred alpha and composite it behind the
+            // original layer. Both operands are premultiplied.
+            let shadow_alpha = blurred.a * composite_params.shadow_color.a;
+            let shadow = vec4<f32>(
+                composite_params.shadow_color.rgb * shadow_alpha,
+                shadow_alpha,
+            );
+            result = vec4<f32>(
+                source.rgb + shadow.rgb * (1.0 - source.a),
+                source.a + shadow_alpha * (1.0 - source.a),
+            );
+        }
     }
 
-    let blurred = textureSample(blur_result, composite_sampler, uv - composite_params.offset);
-    if composite_params.mode < 1.5 {
-        return blurred;
+    // Clip-path groups multiply by a white-on-transparent mask after the
+    // filter, which is the CSS painting order. Opacity comes last.
+    if composite_params.has_mask > 0.5 {
+        result *= textureSample(mask_source, composite_sampler, uv).a;
     }
-
-    // Drop shadow: tint the blurred alpha and composite it behind the
-    // original layer. Both operands are premultiplied.
-    let shadow_alpha = blurred.a * composite_params.shadow_color.a;
-    let shadow = vec4<f32>(composite_params.shadow_color.rgb * shadow_alpha, shadow_alpha);
-    return vec4<f32>(
-        source.rgb + shadow.rgb * (1.0 - source.a),
-        source.a + shadow_alpha * (1.0 - source.a),
-    );
+    return result * composite_params.opacity;
 }

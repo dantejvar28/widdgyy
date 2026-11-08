@@ -11,16 +11,17 @@
 //! * [`effects_painter`] — opacity, transform, blend and clipping.
 //! * [`media_painter`] — images, GIF and video frames.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use vello::Scene;
 use vello::kurbo::Affine;
 use vello::peniko::{BlendMode, Compose, Mix};
 
-use crate::css::properties::ClipPath;
 use crate::scene::{Node, NodeKind, Scene as StickerScene};
 use crate::text::TextEngine;
 
 use super::ShadowDraw;
-use super::filter::{FilterLayer, root_spatial_filter};
+use super::filter::{FilterLayer, LayerItem, root_spatial_filter};
 use super::media::MediaStore;
 use super::{box_painter, effects_painter, media_painter, text_painter};
 
@@ -125,51 +126,23 @@ impl<'a> Painter<'a> {
         }
     }
 
-    /// Paint a scene into filter layers, splitting at filtered descendants.
-    /// Unfiltered runs share a layer; each filtered subtree gets its own.
+    /// Paint a scene into compositing layers, splitting at filtered
+    /// descendants. Nodes that need an offscreen buffer become groups whose
+    /// items are painted recursively.
     pub fn paint_layers(&mut self, sticker_scene: &StickerScene, layers: &mut Vec<FilterLayer>) {
         let mut indices: Vec<usize> = (0..sticker_scene.roots.len()).collect();
         indices.sort_by_key(|index| sticker_scene.roots[*index].z_index);
         for index in indices {
             let root = &sticker_scene.roots[index];
-            if let Some(filter) = root_spatial_filter(root) {
-                let mut scene = Scene::new();
-                self.paint_node(root, Affine::IDENTITY, None, &mut scene);
-                layers.push(FilterLayer {
-                    scene,
-                    filter: Some(filter),
-                });
-                continue;
-            }
-            if subtree_has_filter(root) && !has_active_effects(root) {
-                let mut current = Scene::new();
-                self.paint_node_layers(root, Affine::IDENTITY, &mut current, layers);
-                layers.push(FilterLayer {
-                    scene: current,
-                    filter: None,
-                });
-            } else {
-                let mut scene = Scene::new();
-                self.paint_node(root, Affine::IDENTITY, None, &mut scene);
-                layers.push(FilterLayer {
-                    scene,
-                    filter: None,
-                });
-            }
+            let mut builder = LayerBuilder::default();
+            self.paint_node_into(root, Affine::IDENTITY, &mut builder);
+            layers.extend(builder.finish());
         }
     }
 
-    fn paint_node_layers(
-        &mut self,
-        node: &Node,
-        parent_visual: Affine,
-        current: &mut Scene,
-        layers: &mut Vec<FilterLayer>,
-    ) {
-        if node.mask_image().is_some() {
-            self.paint_node(node, parent_visual, None, current);
-            return;
-        }
+    /// Paint one node in the context of a layer group, splitting children
+    /// that need their own offscreen buffer.
+    fn paint_node_into(&mut self, node: &Node, parent_visual: Affine, builder: &mut LayerBuilder) {
         if !node.visible || node.style.display == crate::css::Display::None {
             return;
         }
@@ -179,66 +152,135 @@ impl<'a> Painter<'a> {
             return;
         }
 
-        let context = node
-            .style
-            .resolve_context(crate::css::Viewport::default(), width, height);
-        let local = effects_painter::node_transform(node, &context);
-        let translate = Affine::translate((node.absolute_x as f64, node.absolute_y as f64));
-        let base = parent_visual * translate * local;
-        let children_visual = parent_visual
-            * translate
-            * local
-            * Affine::translate((-node.absolute_x as f64, -node.absolute_y as f64));
+        if needs_group(node) {
+            let layer = self.build_group(node, parent_visual);
+            builder.push_layer(layer);
+            return;
+        }
+
+        if blocks_splitting(node) && subtree_has_filter(node) {
+            warn_filter_skipped();
+            self.paint_node(node, parent_visual, None, &mut builder.current);
+            return;
+        }
+
+        let (base, children_visual) = visual_transforms(node, parent_visual);
         let box_rect = vello::kurbo::Rect::new(0.0, 0.0, width as f64, height as f64);
-        let layer = effects_painter::begin_effects(node, &base, &box_rect, current);
+        let layer = effects_painter::begin_effects(node, &base, &box_rect, &mut builder.current);
+        let has_mask = node.mask_image().is_some();
+        if has_mask {
+            builder.current.push_layer(
+                vello::peniko::Fill::NonZero,
+                BlendMode::new(Mix::Normal, Compose::SrcOver),
+                1.0,
+                base,
+                &box_rect,
+            );
+        }
 
-        box_painter::paint_shadows(node, &base, current);
-        box_painter::paint_background(node, &base, current, self.media);
-        box_painter::paint_border(node, &base, current, self.media);
+        self.paint_decoration(node, &base, &mut builder.current);
 
-        match &node.kind {
-            NodeKind::Text(_) => {
-                text_painter::paint_text(node, &base, current, self.text, self.inline_shadows);
-            }
-            NodeKind::Media(media) => {
-                media_painter::paint_media(node, media, &base, current, self.media);
-            }
-            NodeKind::Container => {
-                let mut indices: Vec<usize> = (0..node.children.len()).collect();
-                indices.sort_by_key(|index| node.children[*index].z_index);
-                for index in indices {
-                    let child = &node.children[index];
-                    let child_filter = root_spatial_filter(child);
-                    if let Some(filter) = child_filter {
-                        if layer.is_active() {
-                            // Splitting would close the parent's opacity/clip
-                            // layer in the wrong scene; paint it inline.
-                            self.paint_node(child, children_visual, None, current);
-                        } else {
-                            layers.push(FilterLayer {
-                                scene: std::mem::take(current),
-                                filter: None,
-                            });
-                            let mut scene = Scene::new();
-                            self.paint_node(child, children_visual, None, &mut scene);
-                            layers.push(FilterLayer {
-                                scene,
-                                filter: Some(filter),
-                            });
-                        }
-                    } else if subtree_has_filter(child)
-                        && !layer.is_active()
-                        && child.mask_image().is_none()
-                    {
-                        self.paint_node_layers(child, children_visual, current, layers);
-                    } else {
-                        self.paint_node(child, children_visual, None, current);
-                    }
+        if matches!(node.kind, NodeKind::Container) {
+            let mut indices: Vec<usize> = (0..node.children.len()).collect();
+            indices.sort_by_key(|index| node.children[*index].z_index);
+            for index in indices {
+                let child = &node.children[index];
+                if layer.is_active() {
+                    // An active Vello layer cannot span several scenes.
+                    self.paint_node(child, children_visual, None, &mut builder.current);
+                } else {
+                    self.paint_node_into(child, children_visual, builder);
                 }
             }
         }
 
-        effects_painter::end_effects(layer, current);
+        if has_mask {
+            builder.current.push_luminance_mask_layer(
+                vello::peniko::Fill::NonZero,
+                1.0,
+                base,
+                &box_rect,
+            );
+            box_painter::paint_mask_image(node, &base, &mut builder.current, self.media);
+            builder.current.pop_layer();
+            builder.current.pop_layer();
+        }
+
+        effects_painter::end_effects(layer, &mut builder.current);
+    }
+
+    /// Build an offscreen group for a node with its own filter or with
+    /// opacity/clip/isolation over a filtered subtree.
+    fn build_group(&mut self, node: &Node, parent_visual: Affine) -> FilterLayer {
+        let width = node.layout.width.max(0.0);
+        let height = node.layout.height.max(0.0);
+        let (base, children_visual) = visual_transforms(node, parent_visual);
+        let box_rect = vello::kurbo::Rect::new(0.0, 0.0, width as f64, height as f64);
+        let mut layer = FilterLayer {
+            items: Vec::new(),
+            filter: root_spatial_filter(node),
+            opacity: node.opacity().clamp(0.0, 1.0),
+            mask: effects_painter::clip_mask_scene(node, &base, &box_rect),
+        };
+
+        // A mask layer spans the node's whole subtree, so filters below it
+        // cannot be split without applying the mask at composite time. Paint
+        // the subtree as one scene and keep the node's own filter working.
+        if node.mask_image().is_some() {
+            if subtree_has_filter(node) {
+                warn_filter_skipped();
+            }
+            let mut scene = Scene::new();
+            scene.push_layer(
+                vello::peniko::Fill::NonZero,
+                BlendMode::new(Mix::Normal, Compose::SrcOver),
+                1.0,
+                base,
+                &box_rect,
+            );
+            self.paint_decoration(node, &base, &mut scene);
+            if matches!(node.kind, NodeKind::Container) {
+                let mut indices: Vec<usize> = (0..node.children.len()).collect();
+                indices.sort_by_key(|index| node.children[*index].z_index);
+                for index in indices {
+                    self.paint_node(&node.children[index], children_visual, None, &mut scene);
+                }
+            }
+            scene.push_luminance_mask_layer(vello::peniko::Fill::NonZero, 1.0, base, &box_rect);
+            box_painter::paint_mask_image(node, &base, &mut scene, self.media);
+            scene.pop_layer();
+            scene.pop_layer();
+            layer.items.push(LayerItem::Scene(scene));
+            return layer;
+        }
+
+        let mut builder = LayerBuilder::default();
+        self.paint_decoration(node, &base, &mut builder.current);
+        if matches!(node.kind, NodeKind::Container) {
+            let mut indices: Vec<usize> = (0..node.children.len()).collect();
+            indices.sort_by_key(|index| node.children[*index].z_index);
+            for index in indices {
+                self.paint_node_into(&node.children[index], children_visual, &mut builder);
+            }
+        }
+        builder.flush();
+        layer.items = builder.items;
+        layer
+    }
+
+    fn paint_decoration(&mut self, node: &Node, base: &Affine, canvas: &mut Scene) {
+        box_painter::paint_shadows(node, base, canvas);
+        box_painter::paint_background(node, base, canvas, self.media);
+        box_painter::paint_border(node, base, canvas, self.media);
+        match &node.kind {
+            NodeKind::Text(_) => {
+                text_painter::paint_text(node, base, canvas, self.text, self.inline_shadows);
+            }
+            NodeKind::Media(media) => {
+                media_painter::paint_media(node, media, base, canvas, self.media);
+            }
+            NodeKind::Container => {}
+        }
     }
 
     fn paint_node(
@@ -286,23 +328,13 @@ impl<'a> Painter<'a> {
             );
         }
 
-        box_painter::paint_shadows(node, &base, canvas);
-        box_painter::paint_background(node, &base, canvas, self.media);
-        box_painter::paint_border(node, &base, canvas, self.media);
+        self.paint_decoration(node, &base, canvas);
 
-        match &node.kind {
-            NodeKind::Text(_) => {
-                text_painter::paint_text(node, &base, canvas, self.text, self.inline_shadows);
-            }
-            NodeKind::Media(media) => {
-                media_painter::paint_media(node, media, &base, canvas, self.media);
-            }
-            NodeKind::Container => {
-                let mut indices: Vec<usize> = (0..node.children.len()).collect();
-                indices.sort_by_key(|index| node.children[*index].z_index);
-                for index in indices {
-                    self.paint_node(&node.children[index], children_visual, skip_uid, canvas);
-                }
+        if matches!(node.kind, NodeKind::Container) {
+            let mut indices: Vec<usize> = (0..node.children.len()).collect();
+            indices.sort_by_key(|index| node.children[*index].z_index);
+            for index in indices {
+                self.paint_node(&node.children[index], children_visual, skip_uid, canvas);
             }
         }
 
@@ -421,9 +453,81 @@ pub fn subtree_has_filter(node: &Node) -> bool {
     })
 }
 
-fn has_active_effects(node: &Node) -> bool {
-    node.opacity() < 0.999
-        || node.style.effects.mix_blend_mode != Mix::Normal
-        || node.style.effects.isolation
-        || !matches!(node.style.effects.clip_path, ClipPath::None)
+/// Paint-order container: runs of ordinary Vello commands interleaved with
+/// nested groups.
+#[derive(Default)]
+struct LayerBuilder {
+    items: Vec<LayerItem>,
+    current: Scene,
+}
+
+impl LayerBuilder {
+    fn flush(&mut self) {
+        if !self.current.encoding().is_empty() {
+            self.items
+                .push(LayerItem::Scene(std::mem::take(&mut self.current)));
+        }
+    }
+
+    fn push_layer(&mut self, layer: FilterLayer) {
+        self.flush();
+        self.items.push(LayerItem::Layer(layer));
+    }
+
+    fn finish(mut self) -> Vec<FilterLayer> {
+        self.flush();
+        self.items
+            .into_iter()
+            .map(|item| match item {
+                LayerItem::Scene(scene) => FilterLayer::plain(scene),
+                LayerItem::Layer(layer) => layer,
+            })
+            .collect()
+    }
+}
+
+/// Node transform relative to the parent, plus the transform inherited by its
+/// children (the node's transform applied around its own box).
+fn visual_transforms(node: &Node, parent_visual: Affine) -> (Affine, Affine) {
+    let width = node.layout.width.max(0.0);
+    let height = node.layout.height.max(0.0);
+    let context = node
+        .style
+        .resolve_context(crate::css::Viewport::default(), width, height);
+    let local = effects_painter::node_transform(node, &context);
+    let translate = Affine::translate((node.absolute_x as f64, node.absolute_y as f64));
+    let base = parent_visual * translate * local;
+    let children_visual =
+        base * Affine::translate((-node.absolute_x as f64, -node.absolute_y as f64));
+    (base, children_visual)
+}
+
+/// A node needs its own offscreen buffer when it is filtered, or when it
+/// groups opacity/clip/isolation over a filtered descendant.
+fn needs_group(node: &Node) -> bool {
+    if crate::render::has_spatial_filter(&node.style.effects.filters) {
+        return true;
+    }
+    if !subtree_has_filter(node) {
+        return false;
+    }
+    node.opacity() < 0.999 || node.style.effects.isolation || effects_painter::has_clip(node)
+}
+
+/// These effects wrap the whole subtree in one Vello layer, so a filter cannot
+/// be split out of them. They stay as documented limitations of the layer
+/// graph.
+fn blocks_splitting(node: &Node) -> bool {
+    node.mask_image().is_some() || node.style.effects.mix_blend_mode != Mix::Normal
+}
+
+static SKIPPED_FILTER_WARNED: AtomicBool = AtomicBool::new(false);
+
+fn warn_filter_skipped() {
+    if !SKIPPED_FILTER_WARNED.swap(true, Ordering::Relaxed) {
+        log::warn!(
+            "filter inside mask-image or mix-blend-mode is painted inline; \
+             filtering that subtree is not supported yet"
+        );
+    }
 }

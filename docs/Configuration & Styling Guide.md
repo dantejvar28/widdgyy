@@ -325,13 +325,15 @@ If a family exists but does not ship the exact weight/style (common for display 
 
 `opacity`, `box-shadow` (outer and inset), `text-shadow`, `mix-blend-mode`, `filter` (color-matrix filters), individual `translate`/`rotate`/`scale`, `transform`, `transform-origin`, `clip-path` (inset/circle/ellipse/polygon/path), `isolation`, `object-fit`, `object-position`, `backdrop-filter` (video path) and `mask-image` (gradients).
 
-`blur()` and `drop-shadow()` work on root nodes and on nested descendants: the painter splits the paint into layers at each filtered node. A filter inside an already-filtered subtree, or under a node with opacity/clip/isolation, is ignored.
+`blur()` and `drop-shadow()` work on root nodes and on nested descendants, including inside an already-filtered subtree and under `opacity`, `clip-path`, `overflow: hidden` or `isolation`: the painter builds a recursive offscreen layer tree and applies each group's filter, clip mask and opacity at composite time.
+
+`mix-blend-mode` and `mask-image` wrap their subtree in a single Vello layer; a spatial filter below one of them is painted inline and logged once. Blend modes are not carried across offscreen group boundaries. Layer nesting is capped at 8 levels (deeper groups lose their effects) to bound texture memory.
 
 `backdrop-filter: blur(Npx)` works on the video fast path: the video is rendered offscreen at half resolution, blurred, and blended behind each panel using a coverage mask. The largest blur radius in the scene is used. Without a video wallpaper the backdrop is ignored.
 
 `mask-image` supports linear, radial and conic gradients, plus `url()` masks. Gradient stops are treated as alpha (the RGB is converted to white), so `transparent → black → transparent` fades the element and its children. `mask-size`, `mask-position` and `mask-repeat` apply to the mask image. `mask-mode` and multiple mask layers are not implemented yet.
 
-`text-shadow` is rendered with a real GPU Gaussian blur on both the video and the no-video paths (see above). Only scenes with root-level spatial filters use the older sampled approximation.
+`text-shadow` is rendered with a real GPU Gaussian blur on both the video and the no-video paths (see above). Scenes with any spatial filter use the offscreen layer path, which falls back to the older sampled text-shadow approximation.
 
 ### Flex
 
@@ -367,7 +369,7 @@ Supported features: `min-width`, `max-width`, `min-height`, `max-height`, `orien
 
 These are parsed where possible but not painted yet, and are documented so they do not fail silently:
 
-- Nested filters inside an already-filtered subtree or under opacity/clip/isolation.
+- Filters below `mask-image` or `mix-blend-mode`, and group-level blending across offscreen layers.
 - `mask-mode` and multiple mask layers.
 - `border-image-repeat` and the `border-image` shorthand.
 - Multiple background layers.

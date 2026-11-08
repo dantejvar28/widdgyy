@@ -85,6 +85,37 @@ pub fn end_effects(layer: Layer, canvas: &mut Scene) {
     }
 }
 
+/// True when the node clips its content through `clip-path` or `overflow`.
+/// Group formation uses this so a nested filter is not split out of a clip.
+pub fn has_clip(node: &Node) -> bool {
+    !matches!(node.style.effects.clip_path, ClipPath::None) || overflow_clips(node)
+}
+
+/// Rasterizable clip mask in screen coordinates. Groups composite this mask
+/// after applying their spatial filter, matching the CSS painting order.
+pub fn clip_mask_scene(node: &Node, transform: &Affine, box_rect: &Rect) -> Option<Scene> {
+    let shape = clip_shape(node, box_rect)?;
+    let mut scene = Scene::new();
+    scene.fill(
+        Fill::NonZero,
+        *transform,
+        vello::peniko::Color::new([1.0, 1.0, 1.0, 1.0]),
+        None,
+        &shape,
+    );
+    Some(scene)
+}
+
+fn overflow_clips(node: &Node) -> bool {
+    matches!(
+        node.style.overflow_x,
+        Overflow::Hidden | Overflow::Clip | Overflow::Scroll | Overflow::Auto
+    ) || matches!(
+        node.style.overflow_y,
+        Overflow::Hidden | Overflow::Clip | Overflow::Scroll | Overflow::Auto
+    )
+}
+
 fn clip_shape(node: &Node, box_rect: &Rect) -> Option<BezPath> {
     let context = node.style.resolve_context(
         crate::css::Viewport::default(),
@@ -159,14 +190,7 @@ fn clip_shape(node: &Node, box_rect: &Rect) -> Option<BezPath> {
         }
     }
 
-    let hidden = matches!(
-        node.style.overflow_x,
-        Overflow::Hidden | Overflow::Clip | Overflow::Scroll | Overflow::Auto
-    ) || matches!(
-        node.style.overflow_y,
-        Overflow::Hidden | Overflow::Clip | Overflow::Scroll | Overflow::Auto
-    );
-    if hidden {
+    if overflow_clips(node) {
         let shape = RoundedRect::from_rect(*box_rect, 0.0);
         return Some(BezPath::from_iter(shape.path_elements(0.1)));
     }

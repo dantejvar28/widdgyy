@@ -6,7 +6,7 @@
 //! Like `offscreen_render.rs`, this skips instead of failing when no GPU
 //! adapter is available.
 
-use widdgyy::render::filter::{FilterCompositor, SpatialFilter};
+use widdgyy::render::filter::{FilterCompositor, LayerSpec, SpatialFilter};
 
 const WIDTH: u32 = 64;
 const HEIGHT: u32 = 64;
@@ -103,6 +103,205 @@ fn renders_blur_and_drop_shadow() {
             );
         }
     }
+}
+
+#[test]
+fn applies_group_opacity_and_clip_mask() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter available; skipping group composite assertion");
+        return;
+    };
+    let mut renderer = vello::Renderer::new(
+        &device,
+        vello::RendererOptions {
+            use_cpu: false,
+            antialiasing_support: vello::AaSupport::area_only(),
+            num_init_threads: None,
+            pipeline_cache: None,
+        },
+    )
+    .expect("creating Vello renderer");
+
+    let mut scene = vello::Scene::new();
+    scene.fill(
+        vello::peniko::Fill::NonZero,
+        vello::kurbo::Affine::IDENTITY,
+        vello::peniko::Color::new([1.0, 0.0, 0.0, 1.0]),
+        None,
+        &vello::kurbo::Rect::new(8.0, 8.0, 56.0, 56.0),
+    );
+    let mut mask_scene = vello::Scene::new();
+    mask_scene.fill(
+        vello::peniko::Fill::NonZero,
+        vello::kurbo::Affine::IDENTITY,
+        vello::peniko::Color::new([1.0, 1.0, 1.0, 1.0]),
+        None,
+        &vello::kurbo::Rect::new(0.0, 0.0, 32.0, 64.0),
+    );
+
+    let mut filters =
+        FilterCompositor::new(&device, wgpu::TextureFormat::Rgba8Unorm, WIDTH, HEIGHT);
+    let target = test_texture(
+        &device,
+        "opacity target",
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+    );
+    let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
+    let heap = test_texture(
+        &device,
+        "mask",
+        wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+    );
+    let mask_view = heap.create_view(&wgpu::TextureViewDescriptor::default());
+    let params = vello::RenderParams {
+        base_color: vello::peniko::Color::new([0.0, 0.0, 0.0, 0.0]),
+        width: WIDTH,
+        height: HEIGHT,
+        antialiasing_method: vello::AaConfig::Area,
+    };
+    renderer
+        .render_to_texture(&device, &queue, &scene, filters.layer_view(), &params)
+        .expect("rendering source layer");
+    renderer
+        .render_to_texture(&device, &queue, &mask_scene, &mask_view, &params)
+        .expect("rendering clip mask");
+
+    let source = filters.layer_view().clone();
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    filters.encode_composite(
+        &queue,
+        &mut encoder,
+        &target_view,
+        LayerSpec {
+            source: &source,
+            filter: None,
+            opacity: 0.5,
+            mask: Some(&mask_view),
+            source_premultiplied: false,
+        },
+        true,
+    );
+    queue.submit(Some(encoder.finish()));
+
+    let pixels = read_back(&device, &queue, &target);
+    let inside = (32 * WIDTH as usize + 20) * 4;
+    let outside = (32 * WIDTH as usize + 44) * 4;
+    assert!(
+        (pixels[inside + 3] as i32 - 128).abs() <= 3,
+        "opacity must halve alpha"
+    );
+    assert!(pixels[outside + 3] == 0, "mask must remove the right half");
+}
+
+#[test]
+fn composites_premultiplied_group_through_a_filter() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter available; skipping nested group assertion");
+        return;
+    };
+    let mut renderer = vello::Renderer::new(
+        &device,
+        vello::RendererOptions {
+            use_cpu: false,
+            antialiasing_support: vello::AaSupport::area_only(),
+            num_init_threads: None,
+            pipeline_cache: None,
+        },
+    )
+    .expect("creating Vello renderer");
+
+    let mut scene = vello::Scene::new();
+    scene.fill(
+        vello::peniko::Fill::NonZero,
+        vello::kurbo::Affine::IDENTITY,
+        vello::peniko::Color::new([1.0, 0.0, 0.0, 1.0]),
+        None,
+        &vello::kurbo::Rect::new(16.0, 16.0, 48.0, 48.0),
+    );
+
+    let mut filters =
+        FilterCompositor::new(&device, wgpu::TextureFormat::Rgba8Unorm, WIDTH, HEIGHT);
+    let group = test_texture(
+        &device,
+        "group accumulation",
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+    );
+    let group_view = group.create_view(&wgpu::TextureViewDescriptor::default());
+    let target = test_texture(
+        &device,
+        "nested target",
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+    );
+    let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
+    let params = vello::RenderParams {
+        base_color: vello::peniko::Color::new([0.0, 0.0, 0.0, 0.0]),
+        width: WIDTH,
+        height: HEIGHT,
+        antialiasing_method: vello::AaConfig::Area,
+    };
+    renderer
+        .render_to_texture(&device, &queue, &scene, filters.layer_view(), &params)
+        .expect("rendering group source");
+
+    let source = filters.layer_view().clone();
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    filters.encode_composite(
+        &queue,
+        &mut encoder,
+        &group_view,
+        LayerSpec {
+            source: &source,
+            filter: None,
+            opacity: 1.0,
+            mask: None,
+            source_premultiplied: false,
+        },
+        true,
+    );
+    queue.submit(Some(encoder.finish()));
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    filters.encode_composite(
+        &queue,
+        &mut encoder,
+        &target_view,
+        LayerSpec {
+            source: &group_view,
+            filter: Some(SpatialFilter::Blur { radius: 4.0 }),
+            opacity: 1.0,
+            mask: None,
+            source_premultiplied: true,
+        },
+        true,
+    );
+    queue.submit(Some(encoder.finish()));
+
+    let pixels = read_back(&device, &queue, &target);
+    let center = (32 * WIDTH as usize + 32) * 4;
+    let alpha = pixels[center + 3] as f32 / 255.0;
+    let red = pixels[center] as f32 / 255.0;
+    assert!(alpha > 0.5, "group content disappeared");
+    assert!(
+        red > alpha * 0.9,
+        "premultiplied group was premultiplied twice: red={red} alpha={alpha}"
+    );
+}
+
+fn test_texture(device: &wgpu::Device, label: &str, usage: wgpu::TextureUsages) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: WIDTH,
+            height: HEIGHT,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage,
+        view_formats: &[],
+    })
 }
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
