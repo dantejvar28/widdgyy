@@ -84,6 +84,24 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str, current: Color) -
             decl.mask_image = parse_image(value, current);
             true
         }
+        "mask-size" => {
+            decl.mask_size = crate::css::properties::background::parse_size_list(value)
+                .into_iter()
+                .next();
+            true
+        }
+        "mask-position" => {
+            decl.mask_position = crate::css::properties::background::parse_position_list(value)
+                .into_iter()
+                .next();
+            true
+        }
+        "mask-repeat" => {
+            decl.mask_repeat = crate::css::properties::background::parse_repeat_list(value)
+                .into_iter()
+                .next();
+            true
+        }
         "isolation" => {
             decl.isolation = Some(value.eq_ignore_ascii_case("isolate"));
             true

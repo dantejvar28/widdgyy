@@ -309,6 +309,8 @@ Gradients: `linear-gradient()`, `repeating-linear-gradient()`, `radial-gradient(
 
 `border`, `border-width`, `border-style`, `border-color`, `border-radius`, per-side longhands, `outline`, `outline-width`, `outline-style`, `outline-color`, `outline-offset`.
 
+`border-image-source` (`url()`), `border-image-slice` (including `fill`), `border-image-width` and `border-image-outset` are supported with stretched slices. `border-image-repeat` and the `border-image` shorthand are not implemented yet.
+
 As in browsers, a border is only painted when a non-`none` border style is present. Setting `border-width` alone does not draw a border; add `border-style: solid` (or use the `border` shorthand).
 
 ### Text
@@ -327,7 +329,7 @@ If a family exists but does not ship the exact weight/style (common for display 
 
 `backdrop-filter: blur(Npx)` works on the video fast path: the video is rendered offscreen at half resolution, blurred, and blended behind each panel using a coverage mask. The largest blur radius in the scene is used. Without a video wallpaper the backdrop is ignored.
 
-`mask-image` supports linear, radial and conic gradients. Gradient stops are treated as alpha (the RGB is converted to white), so `transparent → black → transparent` fades the element and its children. `mask-size`, `mask-position`, `mask-repeat` and URL masks are not implemented yet.
+`mask-image` supports linear, radial and conic gradients, plus `url()` masks. Gradient stops are treated as alpha (the RGB is converted to white), so `transparent → black → transparent` fades the element and its children. `mask-size`, `mask-position` and `mask-repeat` apply to the mask image. `mask-mode` and multiple mask layers are not implemented yet.
 
 `text-shadow` is rendered with a real GPU Gaussian blur on both the video and the no-video paths (see above). Only scenes with root-level spatial filters use the older sampled approximation.
 
@@ -366,7 +368,8 @@ Supported features: `min-width`, `max-width`, `min-height`, `max-height`, `orien
 These are parsed where possible but not painted yet, and are documented so they do not fail silently:
 
 - Nested filters inside an already-filtered subtree or under opacity/clip/isolation.
-- `mask-size`, `mask-position`, `mask-repeat`, URL masks and `border-image`.
+- `mask-mode` and multiple mask layers.
+- `border-image-repeat` and the `border-image` shorthand.
 - Multiple background layers.
 - `backdrop-filter` outside the video fast path.
 - SVG external clip paths (`clip-path: url(...)`).

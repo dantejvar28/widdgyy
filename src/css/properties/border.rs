@@ -6,6 +6,15 @@
 use super::{BorderStyle, Declarations, parse_color, parse_lengths, split_ws};
 use crate::css::values::{Color, Edges, Length};
 
+#[derive(Clone, Debug, Default)]
+pub struct BorderImage {
+    pub source: String,
+    pub slice: Edges<Length>,
+    pub width: Edges<Length>,
+    pub outset: Edges<Length>,
+    pub fill: bool,
+}
+
 pub fn apply(decl: &mut Declarations, name: &str, value: &str, current: Color) -> bool {
     match name {
         "border-width" => {
@@ -47,6 +56,42 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str, current: Color) -
             }
             true
         }
+        "border-image-source" => {
+            decl.border_image_source = parse_image_url(value);
+            true
+        }
+        "border-image-slice" => {
+            let mut tokens = split_ws(value);
+            let fill = tokens
+                .iter()
+                .any(|token| token.eq_ignore_ascii_case("fill"));
+            tokens.retain(|token| !token.eq_ignore_ascii_case("fill"));
+            let lengths: Vec<Length> = tokens
+                .iter()
+                .filter_map(|token| Length::parse(token).ok())
+                .collect();
+            if let Some(slice) = Edges::from_1_to_4(&lengths) {
+                decl.border_image_slice = Some((slice, fill));
+            }
+            true
+        }
+        "border-image-outset" => {
+            if let Ok(values) = parse_lengths(value)
+                && let Some(outset) = Edges::from_1_to_4(&values)
+            {
+                decl.border_image_outset = Some(outset);
+            }
+            true
+        }
+        "border-image-width" => {
+            if let Ok(values) = parse_lengths(value)
+                && let Some(width) = Edges::from_1_to_4(&values)
+            {
+                decl.border_image_width = Some(width);
+            }
+            true
+        }
+        "border-image" => true,
         "border" | "border-top" | "border-right" | "border-bottom" | "border-left" => {
             apply_border_shorthand(decl, name, value, current);
             true
@@ -200,7 +245,21 @@ pub fn parse_style(value: &str) -> Option<BorderStyle> {
     })
 }
 
-pub fn parse_border_width(value: &str) -> Option<Length> {
+pub fn parse_image_url(value: &str) -> Option<String> {
+    let text = value.trim();
+    if text.eq_ignore_ascii_case("none") {
+        return None;
+    }
+    let inner = text
+        .strip_prefix("url(")
+        .or_else(|| text.strip_prefix("URL("))?
+        .strip_suffix(')')?
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'');
+    (!inner.is_empty()).then(|| inner.to_string())
+}
+
+fn parse_border_width(value: &str) -> Option<Length> {
     match value.trim().to_ascii_lowercase().as_str() {
         "thin" => Some(Length::Px(1.0)),
         "medium" => Some(Length::Px(3.0)),

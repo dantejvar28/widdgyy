@@ -99,10 +99,13 @@ pub fn paint_shadows(node: &Node, transform: &Affine, canvas: &mut Scene) {
 /// Paint a `mask-image` gradient as an alpha mask. Gradient colours are
 /// converted to white with the stop's alpha so the luminance mask behaves like
 /// the CSS alpha mask.
-pub fn paint_mask_image(node: &Node, transform: &Affine, canvas: &mut Scene) {
-    let Some(crate::css::properties::background::BackgroundImage::Gradient(gradient)) =
-        node.mask_image()
-    else {
+pub fn paint_mask_image(
+    node: &Node,
+    transform: &Affine,
+    canvas: &mut Scene,
+    media: &mut MediaStore,
+) {
+    let Some(image) = node.mask_image() else {
         return;
     };
     let width = node.layout.width;
@@ -110,27 +113,120 @@ pub fn paint_mask_image(node: &Node, transform: &Affine, canvas: &mut Scene) {
     let context = node
         .style
         .resolve_context(crate::css::Viewport::default(), width, height);
-    let stops = gradient
-        .stops
-        .iter()
-        .map(|stop| crate::css::values::gradient::ColorStop {
-            color: vello::peniko::Color::new([1.0, 1.0, 1.0, stop.color.components[3]]),
-            position: stop.position,
-        })
-        .collect();
-    let mask = crate::css::values::Gradient {
-        kind: gradient.kind.clone(),
-        stops,
+    let effects = &node.style.effects;
+
+    let (mask_width, mask_height) = match image {
+        crate::css::properties::background::BackgroundImage::Gradient(_) => {
+            background_size(&effects.mask_size, width, height, width, height)
+        }
+        crate::css::properties::background::BackgroundImage::Url(url) => {
+            let Some(loaded) = media.image_for(std::path::Path::new(url)) else {
+                return;
+            };
+            background_size(
+                &effects.mask_size,
+                loaded.width as f32,
+                loaded.height as f32,
+                width,
+                height,
+            )
+        }
     };
-    if let Some(brush) = gradient_brush(&mask, width, height, &context) {
-        let rect = Rect::new(0.0, 0.0, width as f64, height as f64);
-        canvas.fill(
-            vello::peniko::Fill::NonZero,
-            *transform,
-            &brush,
-            None,
-            &rect,
-        );
+    if mask_width <= 0.0 || mask_height <= 0.0 {
+        return;
+    }
+    let free_x = (width - mask_width).max(0.0);
+    let free_y = (height - mask_height).max(0.0);
+    let position_context = ResolveContext {
+        basis_width: free_x,
+        basis_height: free_y,
+        ..context
+    };
+    let origin_x = effects
+        .mask_position
+        .x
+        .resolve(&position_context, Axis::Horizontal);
+    let origin_y = effects
+        .mask_position
+        .y
+        .resolve(&position_context, Axis::Vertical);
+    match image {
+        crate::css::properties::background::BackgroundImage::Gradient(gradient) => {
+            let stops = gradient
+                .stops
+                .iter()
+                .map(|stop| crate::css::values::gradient::ColorStop {
+                    color: vello::peniko::Color::new([1.0, 1.0, 1.0, stop.color.components[3]]),
+                    position: stop.position,
+                })
+                .collect();
+            let mask = crate::css::values::Gradient {
+                kind: gradient.kind.clone(),
+                stops,
+            };
+            if let Some(brush) = gradient_brush(&mask, mask_width, mask_height, &context) {
+                let local = Rect::new(0.0, 0.0, mask_width as f64, mask_height as f64);
+                let repeat = effects.mask_repeat;
+                let repeat_x = matches!(
+                    repeat,
+                    crate::css::properties::BackgroundRepeat::Repeat
+                        | crate::css::properties::BackgroundRepeat::RepeatX
+                        | crate::css::properties::BackgroundRepeat::Space
+                        | crate::css::properties::BackgroundRepeat::Round
+                );
+                let repeat_y = matches!(
+                    repeat,
+                    crate::css::properties::BackgroundRepeat::Repeat
+                        | crate::css::properties::BackgroundRepeat::RepeatY
+                        | crate::css::properties::BackgroundRepeat::Space
+                        | crate::css::properties::BackgroundRepeat::Round
+                );
+                let mut y = origin_y;
+                let mut rows = 0;
+                while y < height && rows < 256 {
+                    let mut x = origin_x;
+                    let mut columns = 0;
+                    while x < width && columns < 256 {
+                        canvas.fill(
+                            vello::peniko::Fill::NonZero,
+                            *transform * Affine::translate((x as f64, y as f64)),
+                            &brush,
+                            None,
+                            &local,
+                        );
+                        if !repeat_x {
+                            break;
+                        }
+                        x += mask_width;
+                        columns += 1;
+                    }
+                    if !repeat_y {
+                        break;
+                    }
+                    y += mask_height;
+                    rows += 1;
+                }
+            }
+        }
+        crate::css::properties::background::BackgroundImage::Url(url) => {
+            let Some(loaded) = media.image_for(std::path::Path::new(url)) else {
+                return;
+            };
+            let sampler = ImageSampler::default().with_quality(ImageQuality::Medium);
+            let brush = ImageBrushRef {
+                image: &loaded,
+                sampler,
+            };
+            draw_tiles(
+                canvas,
+                transform,
+                &brush,
+                (origin_x, origin_y),
+                (mask_width, mask_height),
+                (width, height),
+                effects.mask_repeat,
+            );
+        }
     }
 }
 
@@ -259,7 +355,108 @@ pub fn paint_background(
     canvas.pop_layer();
 }
 
-pub fn paint_border(node: &Node, transform: &Affine, canvas: &mut Scene) {
+fn resolve_slice(length: &Length, basis: f32) -> f32 {
+    match length {
+        Length::Percent(value) => basis * value / 100.0,
+        Length::Px(value) => *value,
+        _ => 0.0,
+    }
+}
+
+fn paint_border_image(node: &Node, transform: &Affine, canvas: &mut Scene, media: &mut MediaStore) {
+    let Some(spec) = &node.style.border.image else {
+        return;
+    };
+    let path = std::path::PathBuf::from(&spec.source);
+    let Some(image) = media.image_for(&path) else {
+        return;
+    };
+    let width = node.layout.width;
+    let height = node.layout.height;
+    if width <= 0.0 || height <= 0.0 {
+        return;
+    }
+    let image_width = image.width as f32;
+    let image_height = image.height as f32;
+    let slice_left = resolve_slice(&spec.slice.left, image_width).clamp(0.0, image_width);
+    let slice_right = resolve_slice(&spec.slice.right, image_width).clamp(0.0, image_width);
+    let slice_top = resolve_slice(&spec.slice.top, image_height).clamp(0.0, image_height);
+    let slice_bottom = resolve_slice(&spec.slice.bottom, image_height).clamp(0.0, image_height);
+    let dest_left = resolve_slice(&spec.width.left, width).clamp(0.0, width / 2.0);
+    let dest_right = resolve_slice(&spec.width.right, width).clamp(0.0, width / 2.0);
+    let dest_top = resolve_slice(&spec.width.top, height).clamp(0.0, height / 2.0);
+    let dest_bottom = resolve_slice(&spec.width.bottom, height).clamp(0.0, height / 2.0);
+    let source_x = [
+        0.0,
+        slice_left,
+        (image_width - slice_right).max(slice_left),
+        image_width,
+    ];
+    let source_y = [
+        0.0,
+        slice_top,
+        (image_height - slice_bottom).max(slice_top),
+        image_height,
+    ];
+    let outset_left = resolve_slice(&spec.outset.left, width).max(0.0);
+    let outset_right = resolve_slice(&spec.outset.right, width).max(0.0);
+    let outset_top = resolve_slice(&spec.outset.top, height).max(0.0);
+    let outset_bottom = resolve_slice(&spec.outset.bottom, height).max(0.0);
+    let dest_x = [
+        -outset_left,
+        dest_left,
+        (width - dest_right).max(dest_left),
+        width + outset_right,
+    ];
+    let dest_y = [
+        -outset_top,
+        dest_top,
+        (height - dest_bottom).max(dest_top),
+        height + outset_bottom,
+    ];
+    let sampler = ImageSampler::default().with_quality(ImageQuality::Medium);
+    let brush = ImageBrushRef {
+        image: &image,
+        sampler,
+    };
+    for row in 0..3 {
+        for column in 0..3 {
+            if row == 1 && column == 1 && !spec.fill {
+                continue;
+            }
+            let source = Rect::new(
+                source_x[column] as f64,
+                source_y[row] as f64,
+                source_x[column + 1] as f64,
+                source_y[row + 1] as f64,
+            );
+            let destination = Rect::new(
+                dest_x[column] as f64,
+                dest_y[row] as f64,
+                dest_x[column + 1] as f64,
+                dest_y[row + 1] as f64,
+            );
+            if source.width() <= 0.0 || source.height() <= 0.0 {
+                continue;
+            }
+            let scale_x = destination.width() / source.width();
+            let scale_y = destination.height() / source.height();
+            let mapping = Affine::translate((
+                destination.x0 - source.x0 * scale_x,
+                destination.y0 - source.y0 * scale_y,
+            )) * Affine::scale_non_uniform(scale_x, scale_y);
+            canvas.push_clip_layer(vello::peniko::Fill::NonZero, *transform, &destination);
+            canvas.draw_image(brush, *transform * mapping);
+            canvas.pop_layer();
+        }
+    }
+}
+
+pub fn paint_border(node: &Node, transform: &Affine, canvas: &mut Scene, media: &mut MediaStore) {
+    if node.style.border.image.is_some() {
+        paint_border_image(node, transform, canvas, media);
+        return;
+    }
     let width = node.layout.width;
     let height = node.layout.height;
     let context = node

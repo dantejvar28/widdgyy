@@ -194,7 +194,7 @@ impl<'a> Painter<'a> {
 
         box_painter::paint_shadows(node, &base, current);
         box_painter::paint_background(node, &base, current, self.media);
-        box_painter::paint_border(node, &base, current);
+        box_painter::paint_border(node, &base, current, self.media);
 
         match &node.kind {
             NodeKind::Text(_) => {
@@ -288,7 +288,7 @@ impl<'a> Painter<'a> {
 
         box_painter::paint_shadows(node, &base, canvas);
         box_painter::paint_background(node, &base, canvas, self.media);
-        box_painter::paint_border(node, &base, canvas);
+        box_painter::paint_border(node, &base, canvas, self.media);
 
         match &node.kind {
             NodeKind::Text(_) => {
@@ -308,7 +308,7 @@ impl<'a> Painter<'a> {
 
         if has_mask {
             canvas.push_luminance_mask_layer(vello::peniko::Fill::NonZero, 1.0, base, &box_rect);
-            box_painter::paint_mask_image(node, &base, canvas);
+            box_painter::paint_mask_image(node, &base, canvas, self.media);
             canvas.pop_layer();
             canvas.pop_layer();
         }

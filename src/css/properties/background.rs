@@ -153,14 +153,14 @@ fn parse_position(value: &str) -> BackgroundPosition {
     }
 }
 
-fn parse_position_list(value: &str) -> Vec<BackgroundPosition> {
+pub(crate) fn parse_position_list(value: &str) -> Vec<BackgroundPosition> {
     split_commas(value)
         .into_iter()
         .map(|part| parse_position(&part))
         .collect()
 }
 
-fn parse_size_list(value: &str) -> Vec<BackgroundSize> {
+pub(crate) fn parse_size_list(value: &str) -> Vec<BackgroundSize> {
     split_commas(value)
         .into_iter()
         .map(|part| {
@@ -185,7 +185,7 @@ fn parse_size_list(value: &str) -> Vec<BackgroundSize> {
         .collect()
 }
 
-fn parse_repeat_list(value: &str) -> Vec<BackgroundRepeat> {
+pub(crate) fn parse_repeat_list(value: &str) -> Vec<BackgroundRepeat> {
     split_commas(value)
         .into_iter()
         .map(|part| match part.trim().to_ascii_lowercase().as_str() {

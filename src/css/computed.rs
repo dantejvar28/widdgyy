@@ -55,6 +55,7 @@ impl Default for BackgroundStyle {
 
 #[derive(Clone, Debug)]
 pub struct BorderStyleComputed {
+    pub image: Option<crate::css::properties::border::BorderImage>,
     pub widths: Edges<Length>,
     pub styles: Edges<BorderStyle>,
     pub colors: Edges<Color>,
@@ -68,6 +69,7 @@ pub struct BorderStyleComputed {
 impl Default for BorderStyleComputed {
     fn default() -> Self {
         Self {
+            image: None,
             widths: Edges::default(),
             styles: Edges::default(),
             colors: Edges::all(Color::new([1.0, 1.0, 1.0, 1.0])),
@@ -142,6 +144,9 @@ pub struct EffectsStyle {
     pub filters: Vec<Filter>,
     pub backdrop_filters: Vec<Filter>,
     pub mask_image: Option<crate::css::properties::background::BackgroundImage>,
+    pub mask_size: crate::css::properties::BackgroundSize,
+    pub mask_position: crate::css::properties::BackgroundPosition,
+    pub mask_repeat: crate::css::properties::BackgroundRepeat,
     pub mix_blend_mode: Mix,
     pub transform: Vec<TransformOp>,
     pub translate: Option<(Length, Length)>,
@@ -162,6 +167,9 @@ impl Default for EffectsStyle {
             filters: Vec::new(),
             backdrop_filters: Vec::new(),
             mask_image: None,
+            mask_size: crate::css::properties::BackgroundSize::Auto,
+            mask_position: crate::css::properties::BackgroundPosition::default(),
+            mask_repeat: crate::css::properties::BackgroundRepeat::Repeat,
             mix_blend_mode: Mix::Normal,
             transform: Vec::new(),
             translate: None,
@@ -552,6 +560,15 @@ impl ComputedStyle {
         if let Some(mask) = &declarations.mask_image {
             style.effects.mask_image = Some(mask.clone());
         }
+        if let Some(size) = &declarations.mask_size {
+            style.effects.mask_size = size.clone();
+        }
+        if let Some(position) = declarations.mask_position.clone() {
+            style.effects.mask_position = position;
+        }
+        if let Some(repeat) = declarations.mask_repeat {
+            style.effects.mask_repeat = repeat;
+        }
         if let Some(blend) = declarations.mix_blend_mode {
             style.effects.mix_blend_mode = blend;
         }
@@ -627,6 +644,28 @@ impl ComputedStyle {
         }
         if let Some(basis) = &declarations.flex_basis {
             style.flex.basis = basis.clone();
+        }
+
+        if let Some(source) = &declarations.border_image_source {
+            let (slice, fill) = declarations
+                .border_image_slice
+                .clone()
+                .unwrap_or_else(|| (Edges::all(Length::Percent(30.0)), false));
+            let width = declarations
+                .border_image_width
+                .clone()
+                .unwrap_or_else(|| style.border.widths.clone());
+            let outset = declarations
+                .border_image_outset
+                .clone()
+                .unwrap_or_else(|| Edges::all(Length::Zero));
+            style.border.image = Some(crate::css::properties::border::BorderImage {
+                source: source.clone(),
+                slice,
+                width,
+                outset,
+                fill,
+            });
         }
 
         // ---- grid -------------------------------------------------------
