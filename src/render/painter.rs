@@ -167,7 +167,7 @@ impl<'a> Painter<'a> {
         let (base, children_visual) = visual_transforms(node, parent_visual);
         let box_rect = vello::kurbo::Rect::new(0.0, 0.0, width as f64, height as f64);
         let layer = effects_painter::begin_effects(node, &base, &box_rect, &mut builder.current);
-        let has_mask = node.mask_image().is_some();
+        let has_mask = !node.masks().is_empty();
         if has_mask {
             builder.current.push_layer(
                 vello::peniko::Fill::NonZero,
@@ -226,7 +226,7 @@ impl<'a> Painter<'a> {
         // A mask layer spans the node's whole subtree, so filters below it
         // cannot be split without applying the mask at composite time. Paint
         // the subtree as one scene and keep the node's own filter working.
-        if node.mask_image().is_some() {
+        if !node.masks().is_empty() {
             if subtree_has_filter(node) {
                 warn_filter_skipped();
             }
@@ -317,7 +317,7 @@ impl<'a> Painter<'a> {
         let box_rect = vello::kurbo::Rect::new(0.0, 0.0, width as f64, height as f64);
 
         let layer = effects_painter::begin_effects(node, &base, &box_rect, canvas);
-        let has_mask = node.mask_image().is_some();
+        let has_mask = !node.masks().is_empty();
         if has_mask {
             canvas.push_layer(
                 vello::peniko::Fill::NonZero,
@@ -518,7 +518,7 @@ fn needs_group(node: &Node) -> bool {
 /// be split out of them. They stay as documented limitations of the layer
 /// graph.
 fn blocks_splitting(node: &Node) -> bool {
-    node.mask_image().is_some() || node.style.effects.mix_blend_mode != Mix::Normal
+    !node.masks().is_empty() || node.style.effects.mix_blend_mode != Mix::Normal
 }
 
 static SKIPPED_FILTER_WARNED: AtomicBool = AtomicBool::new(false);

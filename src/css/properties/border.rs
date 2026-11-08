@@ -6,12 +6,35 @@
 use super::{BorderStyle, Declarations, parse_color, parse_lengths, split_ws};
 use crate::css::values::{Color, Edges, Length};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BorderImageRepeat {
+    #[default]
+    Stretch,
+    Repeat,
+    Round,
+    Space,
+}
+
+impl BorderImageRepeat {
+    fn parse(token: &str) -> Option<Self> {
+        Some(match token.to_ascii_lowercase().as_str() {
+            "stretch" => Self::Stretch,
+            "repeat" => Self::Repeat,
+            "round" => Self::Round,
+            "space" => Self::Space,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct BorderImage {
     pub source: String,
     pub slice: Edges<Length>,
     pub width: Edges<Length>,
     pub outset: Edges<Length>,
+    pub repeat_x: BorderImageRepeat,
+    pub repeat_y: BorderImageRepeat,
     pub fill: bool,
 }
 
@@ -91,7 +114,25 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str, current: Color) -
             }
             true
         }
-        "border-image" => true,
+        "border-image-repeat" => {
+            let values: Vec<BorderImageRepeat> = split_ws(value)
+                .iter()
+                .filter_map(|token| BorderImageRepeat::parse(token))
+                .collect();
+            let repeats = match values.as_slice() {
+                [both] => Some((*both, *both)),
+                [x, y, ..] => Some((*x, *y)),
+                [] => None,
+            };
+            if let Some(repeats) = repeats {
+                decl.border_image_repeat = Some(repeats);
+            }
+            true
+        }
+        "border-image" => {
+            apply_border_image_shorthand(decl, value);
+            true
+        }
         "border" | "border-top" | "border-right" | "border-bottom" | "border-left" => {
             apply_border_shorthand(decl, name, value, current);
             true
@@ -245,7 +286,96 @@ pub fn parse_style(value: &str) -> Option<BorderStyle> {
     })
 }
 
-pub fn parse_image_url(value: &str) -> Option<String> {
+pub fn apply_border_image_shorthand(decl: &mut Declarations, value: &str) {
+    let tokens = split_image_shorthand(value);
+    let mut source: Option<String> = None;
+    let mut slice: Vec<Length> = Vec::new();
+    let mut fill = false;
+    let mut width: Vec<Length> = Vec::new();
+    let mut outset: Vec<Length> = Vec::new();
+    let mut repeats: Vec<BorderImageRepeat> = Vec::new();
+    let mut stage = 0u8;
+
+    for token in tokens {
+        let lower = token.to_ascii_lowercase();
+        if let Some(repeat) = BorderImageRepeat::parse(&token) {
+            if repeats.len() < 2 {
+                repeats.push(repeat);
+            }
+            continue;
+        }
+        match lower.as_str() {
+            "/" => {
+                stage = stage.saturating_add(1);
+                continue;
+            }
+            "fill" => {
+                fill = true;
+                continue;
+            }
+            "none" => {
+                source = None;
+                continue;
+            }
+            _ => {}
+        }
+        if lower.starts_with("url(") {
+            source = parse_image_url(&token);
+            continue;
+        }
+        if let Ok(length) = Length::parse(&token) {
+            match stage {
+                0 => slice.push(length),
+                1 => width.push(length),
+                _ => outset.push(length),
+            }
+        }
+    }
+
+    decl.border_image_source = source;
+    let slice = Edges::from_1_to_4(&slice).unwrap_or_else(|| Edges::all(Length::Percent(100.0)));
+    decl.border_image_slice = Some((slice, fill));
+    decl.border_image_width = Edges::from_1_to_4(&width);
+    decl.border_image_outset = Edges::from_1_to_4(&outset);
+    let (repeat_x, repeat_y) = match repeats.as_slice() {
+        [both] => (*both, *both),
+        [x, y, ..] => (*x, *y),
+        [] => (BorderImageRepeat::Stretch, BorderImageRepeat::Stretch),
+    };
+    decl.border_image_repeat = Some((repeat_x, repeat_y));
+}
+
+/// Split a shorthand into whitespace-separated tokens and slashes while keeping
+/// function arguments such as `url(...)` together.
+fn split_image_shorthand(value: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0i32;
+    for ch in value.chars() {
+        if ch == '(' {
+            depth += 1;
+            current.push(ch);
+        } else if ch == ')' {
+            depth = (depth - 1).max(0);
+            current.push(ch);
+        } else if depth == 0 && (ch.is_whitespace() || ch == '/') {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+            if ch == '/' {
+                tokens.push("/".to_string());
+            }
+        } else {
+            current.push(ch);
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+fn parse_image_url(value: &str) -> Option<String> {
     let text = value.trim();
     if text.eq_ignore_ascii_case("none") {
         return None;

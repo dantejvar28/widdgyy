@@ -70,6 +70,9 @@ pub struct MediaChanges {
 pub struct MediaStore {
     base_dir: PathBuf,
     images: HashMap<PathBuf, Arc<ImageData>>,
+    /// White RGB copies used by `mask-mode: alpha`; Vello's luminance mask
+    /// then resolves to the source alpha.
+    alpha_masks: HashMap<PathBuf, Arc<ImageData>>,
     gifs: HashMap<PathBuf, GifAsset>,
     #[cfg(feature = "video")]
     videos: HashMap<PathBuf, crate::media::video::VideoAsset>,
@@ -85,6 +88,7 @@ impl MediaStore {
     pub fn set_base_dir(&mut self, dir: impl Into<PathBuf>) {
         self.base_dir = dir.into();
         self.images.clear();
+        self.alpha_masks.clear();
         self.gifs.clear();
         #[cfg(feature = "video")]
         self.videos.clear();
@@ -132,6 +136,36 @@ impl MediaStore {
                 None
             }
         }
+    }
+
+    /// Image with white RGB and the original alpha, for `mask-mode: alpha`.
+    pub fn alpha_mask_image_for(&mut self, path: &Path) -> Option<Arc<ImageData>> {
+        let key = self.resolve_path(path);
+        if let Some(image) = self.alpha_masks.get(&key) {
+            return Some(Arc::clone(image));
+        }
+        let source = self.image_for(&key)?;
+        if source.format != ImageFormat::Rgba8 {
+            return None;
+        }
+        let mut data = source.data.data().to_vec();
+        for pixel in data.as_chunks_mut::<4>().0 {
+            pixel[0] = 255;
+            pixel[1] = 255;
+            pixel[2] = 255;
+        }
+        let image = Arc::new(ImageData {
+            data: Blob::from(data),
+            format: ImageFormat::Rgba8,
+            alpha_type: ImageAlphaType::Alpha,
+            width: source.width,
+            height: source.height,
+        });
+        if self.alpha_masks.len() >= IMAGE_CACHE_LIMIT {
+            self.alpha_masks.clear();
+        }
+        self.alpha_masks.insert(key, Arc::clone(&image));
+        Some(image)
     }
 
     fn gif_image(&mut self, path: &Path) -> Option<Arc<ImageData>> {
@@ -202,6 +236,7 @@ impl MediaStore {
     /// Drop assets that are no longer referenced by the scene.
     pub fn retain_paths(&mut self, paths: &std::collections::HashSet<PathBuf>) {
         self.images.retain(|path, _| paths.contains(path));
+        self.alpha_masks.retain(|path, _| paths.contains(path));
         self.gifs.retain(|path, _| paths.contains(path));
         #[cfg(feature = "video")]
         self.videos.retain(|path, _| paths.contains(path));

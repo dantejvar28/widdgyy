@@ -234,7 +234,12 @@ impl Node {
 
     /// Mask image (currently gradients) applied to the element and its children.
     pub fn mask_image(&self) -> Option<&crate::css::properties::background::BackgroundImage> {
-        self.style.effects.mask_image.as_ref()
+        self.style.effects.masks.first().map(|mask| &mask.image)
+    }
+
+    /// Mask layers in paint order.
+    pub fn masks(&self) -> &[crate::css::computed::MaskLayer] {
+        &self.style.effects.masks
     }
 
     /// Largest `backdrop-filter: blur()` radius, in pixels.

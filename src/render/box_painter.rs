@@ -5,10 +5,13 @@
 
 use vello::Scene;
 use vello::kurbo::{Affine, Rect, RoundedRect, RoundedRectRadii, Stroke};
-use vello::peniko::{ColorStop, Extend, Gradient, ImageBrushRef, ImageQuality, ImageSampler, Mix};
+use vello::peniko::{
+    BlendMode, ColorStop, Compose, Extend, Gradient, ImageBrushRef, ImageQuality, ImageSampler, Mix,
+};
 
 use crate::css::Axis;
 use crate::css::properties::background::BackgroundImage;
+use crate::css::properties::border::BorderImageRepeat;
 use crate::css::properties::{BackgroundRepeat, BackgroundSize, BorderBox, BorderStyle};
 use crate::css::values::{Length, ResolveContext};
 use crate::scene::Node;
@@ -105,26 +108,57 @@ pub fn paint_mask_image(
     canvas: &mut Scene,
     media: &mut MediaStore,
 ) {
-    let Some(image) = node.mask_image() else {
-        return;
-    };
     let width = node.layout.width;
     let height = node.layout.height;
+    if width <= 0.0 || height <= 0.0 {
+        return;
+    }
+    let effects = &node.style.effects;
+    if effects.masks.is_empty() {
+        return;
+    }
     let context = node
         .style
         .resolve_context(crate::css::Viewport::default(), width, height);
-    let effects = &node.style.effects;
-
-    let (mask_width, mask_height) = match image {
-        crate::css::properties::background::BackgroundImage::Gradient(_) => {
-            background_size(&effects.mask_size, width, height, width, height)
+    let box_rect = Rect::new(0.0, 0.0, width as f64, height as f64);
+    // Multiple mask layers use the default `mask-composite: add`, so each
+    // layer is accumulated additively inside the luminance mask.
+    let additive = effects.masks.len() > 1;
+    for mask in &effects.masks {
+        if additive {
+            canvas.push_layer(
+                vello::peniko::Fill::NonZero,
+                BlendMode::new(Mix::Normal, Compose::Plus),
+                1.0,
+                *transform,
+                &box_rect,
+            );
         }
-        crate::css::properties::background::BackgroundImage::Url(url) => {
+        paint_single_mask(node, mask, transform, canvas, media, &context);
+        if additive {
+            canvas.pop_layer();
+        }
+    }
+}
+
+fn paint_single_mask(
+    node: &Node,
+    mask: &crate::css::computed::MaskLayer,
+    transform: &Affine,
+    canvas: &mut Scene,
+    media: &mut MediaStore,
+    context: &ResolveContext,
+) {
+    let width = node.layout.width;
+    let height = node.layout.height;
+    let (mask_width, mask_height) = match &mask.image {
+        BackgroundImage::Gradient(_) => background_size(&mask.size, width, height, width, height),
+        BackgroundImage::Url(url) => {
             let Some(loaded) = media.image_for(std::path::Path::new(url)) else {
                 return;
             };
             background_size(
-                &effects.mask_size,
+                &mask.size,
                 loaded.width as f32,
                 loaded.height as f32,
                 width,
@@ -140,18 +174,13 @@ pub fn paint_mask_image(
     let position_context = ResolveContext {
         basis_width: free_x,
         basis_height: free_y,
-        ..context
+        ..*context
     };
-    let origin_x = effects
-        .mask_position
-        .x
-        .resolve(&position_context, Axis::Horizontal);
-    let origin_y = effects
-        .mask_position
-        .y
-        .resolve(&position_context, Axis::Vertical);
-    match image {
-        crate::css::properties::background::BackgroundImage::Gradient(gradient) => {
+    let origin_x = mask.position.x.resolve(&position_context, Axis::Horizontal);
+    let origin_y = mask.position.y.resolve(&position_context, Axis::Vertical);
+
+    match &mask.image {
+        BackgroundImage::Gradient(gradient) => {
             let stops = gradient
                 .stops
                 .iter()
@@ -160,26 +189,26 @@ pub fn paint_mask_image(
                     position: stop.position,
                 })
                 .collect();
-            let mask = crate::css::values::Gradient {
+            let mask_gradient = crate::css::values::Gradient {
                 kind: gradient.kind.clone(),
                 stops,
             };
-            if let Some(brush) = gradient_brush(&mask, mask_width, mask_height, &context) {
+            if let Some(brush) = gradient_brush(&mask_gradient, mask_width, mask_height, context) {
                 let local = Rect::new(0.0, 0.0, mask_width as f64, mask_height as f64);
-                let repeat = effects.mask_repeat;
+                let repeat = mask.repeat;
                 let repeat_x = matches!(
                     repeat,
-                    crate::css::properties::BackgroundRepeat::Repeat
-                        | crate::css::properties::BackgroundRepeat::RepeatX
-                        | crate::css::properties::BackgroundRepeat::Space
-                        | crate::css::properties::BackgroundRepeat::Round
+                    BackgroundRepeat::Repeat
+                        | BackgroundRepeat::RepeatX
+                        | BackgroundRepeat::Space
+                        | BackgroundRepeat::Round
                 );
                 let repeat_y = matches!(
                     repeat,
-                    crate::css::properties::BackgroundRepeat::Repeat
-                        | crate::css::properties::BackgroundRepeat::RepeatY
-                        | crate::css::properties::BackgroundRepeat::Space
-                        | crate::css::properties::BackgroundRepeat::Round
+                    BackgroundRepeat::Repeat
+                        | BackgroundRepeat::RepeatY
+                        | BackgroundRepeat::Space
+                        | BackgroundRepeat::Round
                 );
                 let mut y = origin_y;
                 let mut rows = 0;
@@ -208,8 +237,14 @@ pub fn paint_mask_image(
                 }
             }
         }
-        crate::css::properties::background::BackgroundImage::Url(url) => {
-            let Some(loaded) = media.image_for(std::path::Path::new(url)) else {
+        BackgroundImage::Url(url) => {
+            let path = std::path::Path::new(url);
+            let loaded = match mask.mode {
+                crate::css::properties::MaskMode::Luminance => media.image_for(path),
+                // `match-source` resolves to alpha for CSS images.
+                _ => media.alpha_mask_image_for(path),
+            };
+            let Some(loaded) = loaded else {
                 return;
             };
             let sampler = ImageSampler::default().with_quality(ImageQuality::Medium);
@@ -224,7 +259,7 @@ pub fn paint_mask_image(
                 (origin_x, origin_y),
                 (mask_width, mask_height),
                 (width, height),
-                effects.mask_repeat,
+                mask.repeat,
             );
         }
     }
@@ -371,37 +406,42 @@ fn paint_border_image(node: &Node, transform: &Affine, canvas: &mut Scene, media
     let Some(image) = media.image_for(&path) else {
         return;
     };
-    let width = node.layout.width;
-    let height = node.layout.height;
+    let width = node.layout.width as f64;
+    let height = node.layout.height as f64;
     if width <= 0.0 || height <= 0.0 {
         return;
     }
     let image_width = image.width as f32;
     let image_height = image.height as f32;
-    let slice_left = resolve_slice(&spec.slice.left, image_width).clamp(0.0, image_width);
-    let slice_right = resolve_slice(&spec.slice.right, image_width).clamp(0.0, image_width);
-    let slice_top = resolve_slice(&spec.slice.top, image_height).clamp(0.0, image_height);
-    let slice_bottom = resolve_slice(&spec.slice.bottom, image_height).clamp(0.0, image_height);
-    let dest_left = resolve_slice(&spec.width.left, width).clamp(0.0, width / 2.0);
-    let dest_right = resolve_slice(&spec.width.right, width).clamp(0.0, width / 2.0);
-    let dest_top = resolve_slice(&spec.width.top, height).clamp(0.0, height / 2.0);
-    let dest_bottom = resolve_slice(&spec.width.bottom, height).clamp(0.0, height / 2.0);
+    let slice_left = resolve_slice(&spec.slice.left, image_width).clamp(0.0, image_width) as f64;
+    let slice_right = resolve_slice(&spec.slice.right, image_width).clamp(0.0, image_width) as f64;
+    let slice_top = resolve_slice(&spec.slice.top, image_height).clamp(0.0, image_height) as f64;
+    let slice_bottom =
+        resolve_slice(&spec.slice.bottom, image_height).clamp(0.0, image_height) as f64;
+    let dest_left =
+        resolve_slice(&spec.width.left, width as f32).clamp(0.0, width as f32 / 2.0) as f64;
+    let dest_right =
+        resolve_slice(&spec.width.right, width as f32).clamp(0.0, width as f32 / 2.0) as f64;
+    let dest_top =
+        resolve_slice(&spec.width.top, height as f32).clamp(0.0, height as f32 / 2.0) as f64;
+    let dest_bottom =
+        resolve_slice(&spec.width.bottom, height as f32).clamp(0.0, height as f32 / 2.0) as f64;
     let source_x = [
         0.0,
         slice_left,
-        (image_width - slice_right).max(slice_left),
-        image_width,
+        (image_width as f64 - slice_right).max(slice_left),
+        image_width as f64,
     ];
     let source_y = [
         0.0,
         slice_top,
-        (image_height - slice_bottom).max(slice_top),
-        image_height,
+        (image_height as f64 - slice_bottom).max(slice_top),
+        image_height as f64,
     ];
-    let outset_left = resolve_slice(&spec.outset.left, width).max(0.0);
-    let outset_right = resolve_slice(&spec.outset.right, width).max(0.0);
-    let outset_top = resolve_slice(&spec.outset.top, height).max(0.0);
-    let outset_bottom = resolve_slice(&spec.outset.bottom, height).max(0.0);
+    let outset_left = resolve_slice(&spec.outset.left, width as f32).max(0.0) as f64;
+    let outset_right = resolve_slice(&spec.outset.right, width as f32).max(0.0) as f64;
+    let outset_top = resolve_slice(&spec.outset.top, height as f32).max(0.0) as f64;
+    let outset_bottom = resolve_slice(&spec.outset.bottom, height as f32).max(0.0) as f64;
     let dest_x = [
         -outset_left,
         dest_left,
@@ -419,37 +459,236 @@ fn paint_border_image(node: &Node, transform: &Affine, canvas: &mut Scene, media
         image: &image,
         sampler,
     };
-    for row in 0..3 {
-        for column in 0..3 {
-            if row == 1 && column == 1 && !spec.fill {
-                continue;
-            }
+
+    // Corners are always stretched to their destination region.
+    for row in [0usize, 2] {
+        for column in [0usize, 2] {
             let source = Rect::new(
-                source_x[column] as f64,
-                source_y[row] as f64,
-                source_x[column + 1] as f64,
-                source_y[row + 1] as f64,
+                source_x[column],
+                source_y[row],
+                source_x[column + 1],
+                source_y[row + 1],
             );
             let destination = Rect::new(
-                dest_x[column] as f64,
-                dest_y[row] as f64,
-                dest_x[column + 1] as f64,
-                dest_y[row + 1] as f64,
+                dest_x[column],
+                dest_y[row],
+                dest_x[column + 1],
+                dest_y[row + 1],
             );
-            if source.width() <= 0.0 || source.height() <= 0.0 {
-                continue;
-            }
-            let scale_x = destination.width() / source.width();
-            let scale_y = destination.height() / source.height();
-            let mapping = Affine::translate((
-                destination.x0 - source.x0 * scale_x,
-                destination.y0 - source.y0 * scale_y,
-            )) * Affine::scale_non_uniform(scale_x, scale_y);
-            canvas.push_clip_layer(vello::peniko::Fill::NonZero, *transform, &destination);
-            canvas.draw_image(brush, *transform * mapping);
-            canvas.pop_layer();
+            draw_border_tile(canvas, transform, brush, source, destination);
         }
     }
+
+    // Step 1: scale edges to the border image region thickness while keeping
+    // their proportions. Zero or infinite factors fall back to no scaling.
+    let top_scale = proportional_scale(dest_y[1] - dest_y[0], slice_top);
+    let bottom_scale = proportional_scale(dest_y[3] - dest_y[2], slice_bottom);
+    let left_scale = proportional_scale(dest_x[1] - dest_x[0], slice_left);
+    let right_scale = proportional_scale(dest_x[3] - dest_x[2], slice_right);
+    let inner_source_width = source_x[2] - source_x[1];
+    let inner_source_height = source_y[2] - source_y[1];
+
+    let top_region = Rect::new(dest_x[1], dest_y[0], dest_x[2], dest_y[1]);
+    let bottom_region = Rect::new(dest_x[1], dest_y[2], dest_x[2], dest_y[3]);
+    let left_region = Rect::new(dest_x[0], dest_y[1], dest_x[1], dest_y[2]);
+    let right_region = Rect::new(dest_x[2], dest_y[1], dest_x[3], dest_y[2]);
+
+    draw_border_cell(
+        canvas,
+        transform,
+        brush,
+        Rect::new(source_x[1], source_y[0], source_x[2], source_y[1]),
+        top_region,
+        inner_source_width * top_scale,
+        top_region.height(),
+        spec.repeat_x,
+        BorderImageRepeat::Stretch,
+    );
+    draw_border_cell(
+        canvas,
+        transform,
+        brush,
+        Rect::new(source_x[1], source_y[2], source_x[2], source_y[3]),
+        bottom_region,
+        inner_source_width * bottom_scale,
+        bottom_region.height(),
+        spec.repeat_x,
+        BorderImageRepeat::Stretch,
+    );
+    draw_border_cell(
+        canvas,
+        transform,
+        brush,
+        Rect::new(source_x[0], source_y[1], source_x[1], source_y[2]),
+        left_region,
+        left_region.width(),
+        inner_source_height * left_scale,
+        BorderImageRepeat::Stretch,
+        spec.repeat_y,
+    );
+    draw_border_cell(
+        canvas,
+        transform,
+        brush,
+        Rect::new(source_x[2], source_y[1], source_x[3], source_y[2]),
+        right_region,
+        right_region.width(),
+        inner_source_height * right_scale,
+        BorderImageRepeat::Stretch,
+        spec.repeat_y,
+    );
+
+    if spec.fill {
+        // The middle image uses the top/left scale factors, with the bottom
+        // and right as fallbacks, as specified.
+        let middle_scale_x = safe_factor(top_scale).or_else(|| safe_factor(bottom_scale));
+        let middle_scale_y = safe_factor(left_scale).or_else(|| safe_factor(right_scale));
+        let middle_width = middle_scale_x
+            .map(|scale| inner_source_width * scale)
+            .unwrap_or(inner_source_width);
+        let middle_height = middle_scale_y
+            .map(|scale| inner_source_height * scale)
+            .unwrap_or(inner_source_height);
+        draw_border_cell(
+            canvas,
+            transform,
+            brush,
+            Rect::new(source_x[1], source_y[1], source_x[2], source_y[2]),
+            Rect::new(dest_x[1], dest_y[1], dest_x[2], dest_y[2]),
+            middle_width,
+            middle_height,
+            spec.repeat_x,
+            spec.repeat_y,
+        );
+    }
+}
+
+fn proportional_scale(destination: f64, source: f64) -> f64 {
+    if source > 0.0 && destination.is_finite() && destination > 0.0 {
+        destination / source
+    } else {
+        1.0
+    }
+}
+
+fn safe_factor(scale: f64) -> Option<f64> {
+    (scale.is_finite() && scale > 0.0).then_some(scale)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_border_cell(
+    canvas: &mut Scene,
+    transform: &Affine,
+    brush: ImageBrushRef<'_>,
+    source: Rect,
+    region: Rect,
+    natural_width: f64,
+    natural_height: f64,
+    mode_x: BorderImageRepeat,
+    mode_y: BorderImageRepeat,
+) {
+    if source.width() <= 0.0 || source.height() <= 0.0 {
+        return;
+    }
+    if region.width() <= 0.0 || region.height() <= 0.0 {
+        return;
+    }
+    let columns = border_axis_tiles(region.x0, region.width(), natural_width, mode_x);
+    let rows = border_axis_tiles(region.y0, region.height(), natural_height, mode_y);
+    for &(x, tile_width) in &columns {
+        for &(y, tile_height) in &rows {
+            draw_border_tile(
+                canvas,
+                transform,
+                brush,
+                source,
+                Rect::new(x, y, x + tile_width, y + tile_height),
+            );
+        }
+    }
+}
+
+/// Tile positions along one axis for `border-image-repeat`.
+fn border_axis_tiles(
+    region_start: f64,
+    region_length: f64,
+    natural: f64,
+    mode: BorderImageRepeat,
+) -> Vec<(f64, f64)> {
+    if region_length <= 0.0 {
+        return Vec::new();
+    }
+    let tile = if natural.is_finite() && natural > 0.0 {
+        natural
+    } else {
+        region_length
+    };
+    const MAX_TILES: i64 = 512;
+    match mode {
+        BorderImageRepeat::Stretch => vec![(region_start, region_length)],
+        BorderImageRepeat::Repeat => {
+            // The first tile is centred in the region, then the pattern is
+            // tiled in both directions and clipped at the region edges.
+            let origin = region_start + (region_length - tile) / 2.0;
+            let first = ((region_start - origin) / tile).floor() as i64;
+            let last = ((region_start + region_length - origin) / tile).ceil() as i64;
+            let mut tiles = Vec::new();
+            for index in first..last {
+                if tiles.len() as i64 >= MAX_TILES {
+                    break;
+                }
+                tiles.push((origin + index as f64 * tile, tile));
+            }
+            tiles
+        }
+        BorderImageRepeat::Round => {
+            let count = (region_length / tile).round().max(1.0) as i64;
+            let count = count.min(MAX_TILES);
+            let size = region_length / count as f64;
+            (0..count)
+                .map(|index| (region_start + index as f64 * size, size))
+                .collect()
+        }
+        BorderImageRepeat::Space => {
+            let count = (region_length / tile).floor() as i64;
+            if count <= 0 {
+                return Vec::new();
+            }
+            let count = count.min(MAX_TILES);
+            let gap = (region_length - count as f64 * tile) / (count + 1) as f64;
+            (0..count)
+                .map(|index| {
+                    let x = region_start + gap + index as f64 * (tile + gap);
+                    (x, tile)
+                })
+                .collect()
+        }
+    }
+}
+
+fn draw_border_tile(
+    canvas: &mut Scene,
+    transform: &Affine,
+    brush: ImageBrushRef<'_>,
+    source: Rect,
+    destination: Rect,
+) {
+    if source.width() <= 0.0
+        || source.height() <= 0.0
+        || destination.width() <= 0.0
+        || destination.height() <= 0.0
+    {
+        return;
+    }
+    let scale_x = destination.width() / source.width();
+    let scale_y = destination.height() / source.height();
+    let mapping = Affine::translate((
+        destination.x0 - source.x0 * scale_x,
+        destination.y0 - source.y0 * scale_y,
+    )) * Affine::scale_non_uniform(scale_x, scale_y);
+    canvas.push_clip_layer(vello::peniko::Fill::NonZero, *transform, &destination);
+    canvas.draw_image(brush, *transform * mapping);
+    canvas.pop_layer();
 }
 
 pub fn paint_border(node: &Node, transform: &Affine, canvas: &mut Scene, media: &mut MediaStore) {
@@ -856,7 +1095,7 @@ fn gradient_brush(
         }
     };
 
-    let stops: Vec<ColorStop> = gradient
+    let mut stops: Vec<ColorStop> = gradient
         .stops
         .iter()
         .enumerate()
@@ -877,6 +1116,93 @@ fn gradient_brush(
     if stops.is_empty() {
         return None;
     }
+    // Vello's ramp builder treats the first stop as if it were at 0 and
+    // extrapolates past the last one, so pad explicit start/end stops. This is
+    // also the CSS rule for the area before the first and after the last stop.
+    if stops[0].offset > 0.0 {
+        let first = stops[0];
+        stops.insert(
+            0,
+            ColorStop {
+                offset: 0.0,
+                color: first.color,
+            },
+        );
+    }
+    let last = *stops.last().expect("non-empty stops");
+    if last.offset < 1.0 {
+        stops.push(ColorStop {
+            offset: 1.0,
+            color: last.color,
+        });
+    }
     brush.stops = stops.as_slice().into();
     Some(brush)
+}
+
+#[cfg(test)]
+mod border_tiling_tests {
+    use super::border_axis_tiles;
+    use crate::css::properties::border::BorderImageRepeat::{Repeat, Round, Space, Stretch};
+
+    fn approx(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-6
+    }
+
+    #[test]
+    fn stretch_uses_one_tile() {
+        let tiles = border_axis_tiles(10.0, 100.0, 30.0, Stretch);
+        assert_eq!(tiles.len(), 1);
+        assert!(approx(tiles[0].0, 10.0) && approx(tiles[0].1, 100.0));
+    }
+
+    #[test]
+    fn round_fits_a_whole_number_of_tiles() {
+        let tiles = border_axis_tiles(0.0, 100.0, 30.0, Round);
+        assert_eq!(tiles.len(), 3);
+        assert!(tiles.iter().all(|(_, size)| approx(*size, 100.0 / 3.0)));
+        assert!(approx(tiles[2].0 + tiles[2].1, 100.0));
+    }
+
+    #[test]
+    fn space_distributes_gaps_before_between_and_after() {
+        let tiles = border_axis_tiles(0.0, 100.0, 30.0, Space);
+        assert_eq!(tiles.len(), 3);
+        assert!(approx(tiles[0].0, 2.5));
+        assert!(approx(tiles[1].0, 35.0));
+        assert!(approx(tiles[2].0, 67.5));
+        assert!(approx(tiles[2].0 + tiles[2].1, 97.5));
+    }
+
+    #[test]
+    fn repeat_centers_the_pattern_and_covers_the_region() {
+        let tiles = border_axis_tiles(0.0, 100.0, 30.0, Repeat);
+        assert!(tiles.iter().any(|(start, _)| *start < 0.0));
+        assert!(tiles.iter().any(|(start, size)| start + size > 100.0));
+        assert!(tiles.iter().any(|(start, _)| (start - 5.0).abs() < 1e-6));
+    }
+
+    #[test]
+    fn space_is_empty_when_no_whole_tile_fits() {
+        assert!(border_axis_tiles(0.0, 20.0, 30.0, Space).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod gradient_offset_tests {
+    use super::gradient_brush;
+    use crate::css::values::{Gradient, ResolveContext};
+    use vello::peniko::Color;
+
+    #[test]
+    fn brush_keeps_duplicate_stop_offsets() {
+        let gradient = Gradient::parse(
+            "linear-gradient(to right, #000 50%, transparent 50%)",
+            Color::new([0.0, 0.0, 0.0, 0.0]),
+        )
+        .unwrap();
+        let brush = gradient_brush(&gradient, 100.0, 100.0, &ResolveContext::default()).unwrap();
+        let offsets: Vec<f32> = brush.stops.iter().map(|stop| stop.offset).collect();
+        assert_eq!(offsets, vec![0.0, 0.5, 0.5, 1.0]);
+    }
 }

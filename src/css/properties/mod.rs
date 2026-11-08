@@ -187,6 +187,15 @@ pub enum BorderBox {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum MaskMode {
+    /// CSS images (rasters and gradients) are treated as alpha masks.
+    #[default]
+    MatchSource,
+    Alpha,
+    Luminance,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum BackgroundRepeat {
     #[default]
     Repeat,
@@ -350,6 +359,7 @@ pub struct Declarations {
     pub border_image_slice: Option<(Edges<Length>, bool)>,
     pub border_image_width: Option<Edges<Length>>,
     pub border_image_outset: Option<Edges<Length>>,
+    pub border_image_repeat: Option<(border::BorderImageRepeat, border::BorderImageRepeat)>,
     pub outline_width: Option<Length>,
     pub outline_style: Option<BorderStyle>,
     pub outline_color: Option<Color>,
@@ -384,10 +394,11 @@ pub struct Declarations {
     pub box_shadow: Option<Vec<Shadow>>,
     pub filter: Option<Vec<Filter>>,
     pub backdrop_filter: Option<Vec<Filter>>,
-    pub mask_image: Option<background::BackgroundImage>,
-    pub mask_size: Option<BackgroundSize>,
-    pub mask_position: Option<BackgroundPosition>,
-    pub mask_repeat: Option<BackgroundRepeat>,
+    pub mask_image: Option<Vec<background::BackgroundImage>>,
+    pub mask_mode: Option<Vec<MaskMode>>,
+    pub mask_size: Option<Vec<BackgroundSize>>,
+    pub mask_position: Option<Vec<BackgroundPosition>>,
+    pub mask_repeat: Option<Vec<BackgroundRepeat>>,
     pub mix_blend_mode: Option<Mix>,
     pub transform: Option<Vec<TransformOp>>,
     pub translate: Option<(Length, Length)>,

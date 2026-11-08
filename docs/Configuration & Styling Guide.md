@@ -309,7 +309,7 @@ Gradients: `linear-gradient()`, `repeating-linear-gradient()`, `radial-gradient(
 
 `border`, `border-width`, `border-style`, `border-color`, `border-radius`, per-side longhands, `outline`, `outline-width`, `outline-style`, `outline-color`, `outline-offset`.
 
-`border-image-source` (`url()`), `border-image-slice` (including `fill`), `border-image-width` and `border-image-outset` are supported with stretched slices. `border-image-repeat` and the `border-image` shorthand are not implemented yet.
+`border-image-source` (`url()`), `border-image-slice` (including `fill`), `border-image-width`, `border-image-outset` and `border-image-repeat` (`stretch`, `repeat`, `round`, `space`; one value for both axes or `horizontal vertical`) are supported, plus the `border-image` shorthand. Corners are stretched, edges and the center tile according to the spec, and nesting is capped at 512 tiles per axis.
 
 As in browsers, a border is only painted when a non-`none` border style is present. Setting `border-width` alone does not draw a border; add `border-style: solid` (or use the `border` shorthand).
 
@@ -331,7 +331,7 @@ If a family exists but does not ship the exact weight/style (common for display 
 
 `backdrop-filter: blur(Npx)` works on the video fast path: the video is rendered offscreen at half resolution, blurred, and blended behind each panel using a coverage mask. The largest blur radius in the scene is used. Without a video wallpaper the backdrop is ignored.
 
-`mask-image` supports linear, radial and conic gradients, plus `url()` masks. Gradient stops are treated as alpha (the RGB is converted to white), so `transparent → black → transparent` fades the element and its children. `mask-size`, `mask-position` and `mask-repeat` apply to the mask image. `mask-mode` and multiple mask layers are not implemented yet.
+`mask-image` accepts a comma-separated list of linear, radial and conic gradients plus `url()` masks. `mask-size`, `mask-position`, `mask-repeat` and `mask-mode` (`match-source`, `alpha`, `luminance`) are list-valued and match each layer; missing values repeat from the start of the list. Multiple layers accumulate additively, which matches the initial `mask-composite: add`; other composite operators are not implemented. `match-source` resolves to alpha for CSS images (rasters and gradients), as browsers do. Gradient stops are painted as white with their alpha; a luminance mask multiplies the image's luminance by its alpha.
 
 `text-shadow` is rendered with a real GPU Gaussian blur on both the video and the no-video paths (see above). Scenes with any spatial filter use the offscreen layer path, which falls back to the older sampled text-shadow approximation.
 
@@ -370,8 +370,8 @@ Supported features: `min-width`, `max-width`, `min-height`, `max-height`, `orien
 These are parsed where possible but not painted yet, and are documented so they do not fail silently:
 
 - Filters below `mask-image` or `mix-blend-mode`, and group-level blending across offscreen layers.
-- `mask-mode` and multiple mask layers.
-- `border-image-repeat` and the `border-image` shorthand.
+- `mask-composite` operators other than additive composition.
+- `border-image` sources other than `url()` (for example gradients).
 - Multiple background layers.
 - `backdrop-filter` outside the video fast path.
 - SVG external clip paths (`clip-path: url(...)`).

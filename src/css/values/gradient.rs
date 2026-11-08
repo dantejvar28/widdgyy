@@ -240,6 +240,17 @@ mod tests {
     }
 
     #[test]
+    fn keeps_duplicate_stop_positions() {
+        let gradient = Gradient::parse(
+            "linear-gradient(to right, #000 50%, transparent 50%)",
+            Color::new([0.0, 0.0, 0.0, 0.0]),
+        )
+        .unwrap();
+        assert_eq!(gradient.stops[0].position, Some(0.5));
+        assert_eq!(gradient.stops[1].position, Some(0.5));
+    }
+
+    #[test]
     fn parses_radial_gradient() {
         let gradient = Gradient::parse(
             "radial-gradient(circle at 20% 30%, red, blue)",

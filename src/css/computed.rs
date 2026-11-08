@@ -138,15 +138,21 @@ impl Default for TextStyle {
 }
 
 #[derive(Clone, Debug)]
+pub struct MaskLayer {
+    pub image: crate::css::properties::background::BackgroundImage,
+    pub mode: crate::css::properties::MaskMode,
+    pub size: BackgroundSize,
+    pub position: BackgroundPosition,
+    pub repeat: BackgroundRepeat,
+}
+
+#[derive(Clone, Debug)]
 pub struct EffectsStyle {
     pub opacity: f32,
     pub box_shadows: Vec<Shadow>,
     pub filters: Vec<Filter>,
     pub backdrop_filters: Vec<Filter>,
-    pub mask_image: Option<crate::css::properties::background::BackgroundImage>,
-    pub mask_size: crate::css::properties::BackgroundSize,
-    pub mask_position: crate::css::properties::BackgroundPosition,
-    pub mask_repeat: crate::css::properties::BackgroundRepeat,
+    pub masks: Vec<MaskLayer>,
     pub mix_blend_mode: Mix,
     pub transform: Vec<TransformOp>,
     pub translate: Option<(Length, Length)>,
@@ -166,10 +172,7 @@ impl Default for EffectsStyle {
             box_shadows: Vec::new(),
             filters: Vec::new(),
             backdrop_filters: Vec::new(),
-            mask_image: None,
-            mask_size: crate::css::properties::BackgroundSize::Auto,
-            mask_position: crate::css::properties::BackgroundPosition::default(),
-            mask_repeat: crate::css::properties::BackgroundRepeat::Repeat,
+            masks: Vec::new(),
             mix_blend_mode: Mix::Normal,
             transform: Vec::new(),
             translate: None,
@@ -557,17 +560,26 @@ impl ComputedStyle {
         if let Some(filters) = &declarations.backdrop_filter {
             style.effects.backdrop_filters = filters.clone();
         }
-        if let Some(mask) = &declarations.mask_image {
-            style.effects.mask_image = Some(mask.clone());
-        }
-        if let Some(size) = &declarations.mask_size {
-            style.effects.mask_size = size.clone();
-        }
-        if let Some(position) = declarations.mask_position.clone() {
-            style.effects.mask_position = position;
-        }
-        if let Some(repeat) = declarations.mask_repeat {
-            style.effects.mask_repeat = repeat;
+        if let Some(images) = &declarations.mask_image {
+            style.effects.masks = images
+                .iter()
+                .enumerate()
+                .map(|(index, image)| MaskLayer {
+                    image: image.clone(),
+                    mode: list_value(&declarations.mask_mode, index)
+                        .copied()
+                        .unwrap_or_default(),
+                    size: list_value(&declarations.mask_size, index)
+                        .cloned()
+                        .unwrap_or(BackgroundSize::Auto),
+                    position: list_value(&declarations.mask_position, index)
+                        .cloned()
+                        .unwrap_or_default(),
+                    repeat: list_value(&declarations.mask_repeat, index)
+                        .copied()
+                        .unwrap_or(BackgroundRepeat::Repeat),
+                })
+                .collect();
         }
         if let Some(blend) = declarations.mix_blend_mode {
             style.effects.mix_blend_mode = blend;
@@ -650,7 +662,7 @@ impl ComputedStyle {
             let (slice, fill) = declarations
                 .border_image_slice
                 .clone()
-                .unwrap_or_else(|| (Edges::all(Length::Percent(30.0)), false));
+                .unwrap_or_else(|| (Edges::all(Length::Percent(100.0)), false));
             let width = declarations
                 .border_image_width
                 .clone()
@@ -659,11 +671,17 @@ impl ComputedStyle {
                 .border_image_outset
                 .clone()
                 .unwrap_or_else(|| Edges::all(Length::Zero));
+            let (repeat_x, repeat_y) = declarations.border_image_repeat.unwrap_or((
+                crate::css::properties::border::BorderImageRepeat::Stretch,
+                crate::css::properties::border::BorderImageRepeat::Stretch,
+            ));
             style.border.image = Some(crate::css::properties::border::BorderImage {
                 source: source.clone(),
                 slice,
                 width,
                 outset,
+                repeat_x,
+                repeat_y,
                 fill,
             });
         }
@@ -696,4 +714,13 @@ impl ComputedStyle {
     pub fn resolve_context(&self, viewport: Viewport, width: f32, height: f32) -> ResolveContext {
         viewport.context(self.text.font_size_px, width, height)
     }
+}
+
+/// CSS list-valued properties repeat their values until every layer has one.
+fn list_value<T>(list: &Option<Vec<T>>, index: usize) -> Option<&T> {
+    let list = list.as_ref()?;
+    if list.is_empty() {
+        return None;
+    }
+    list.get(index % list.len())
 }

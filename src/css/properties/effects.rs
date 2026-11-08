@@ -81,25 +81,27 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str, current: Color) -
             true
         }
         "mask-image" => {
-            decl.mask_image = parse_image(value, current);
+            decl.mask_image = Some(crate::css::properties::background::parse_image_list(
+                value, current,
+            ));
+            true
+        }
+        "mask-mode" => {
+            decl.mask_mode = Some(parse_mask_mode_list(value));
             true
         }
         "mask-size" => {
-            decl.mask_size = crate::css::properties::background::parse_size_list(value)
-                .into_iter()
-                .next();
+            decl.mask_size = Some(crate::css::properties::background::parse_size_list(value));
             true
         }
         "mask-position" => {
-            decl.mask_position = crate::css::properties::background::parse_position_list(value)
-                .into_iter()
-                .next();
+            decl.mask_position = Some(crate::css::properties::background::parse_position_list(
+                value,
+            ));
             true
         }
         "mask-repeat" => {
-            decl.mask_repeat = crate::css::properties::background::parse_repeat_list(value)
-                .into_iter()
-                .next();
+            decl.mask_repeat = Some(crate::css::properties::background::parse_repeat_list(value));
             true
         }
         "isolation" => {
@@ -169,13 +171,15 @@ fn parse_position(value: &str) -> (Length, Length) {
     )
 }
 
-fn parse_image(
-    value: &str,
-    current: Color,
-) -> Option<crate::css::properties::background::BackgroundImage> {
-    crate::css::properties::background::parse_image_list(value, current)
+fn parse_mask_mode_list(value: &str) -> Vec<crate::css::properties::MaskMode> {
+    crate::css::properties::split_commas(value)
         .into_iter()
-        .next()
+        .map(|part| match part.trim().to_ascii_lowercase().as_str() {
+            "alpha" => crate::css::properties::MaskMode::Alpha,
+            "luminance" => crate::css::properties::MaskMode::Luminance,
+            _ => crate::css::properties::MaskMode::MatchSource,
+        })
+        .collect()
 }
 
 fn parse_filter_list(value: &str, current: Color) -> Vec<Filter> {
