@@ -274,6 +274,8 @@ pub struct ComputedStyle {
     pub grid: GridStyle,
 
     pub z_index: i32,
+    /// Generated content for `::before`/`::after`; `None` means no box.
+    pub content: Option<String>,
     pub animations: Vec<Animation>,
     pub transitions: Vec<Transition>,
     pub custom_properties: BTreeMap<String, String>,
@@ -311,6 +313,7 @@ impl Default for ComputedStyle {
             flex: FlexStyle::default(),
             grid: GridStyle::default(),
             z_index: 0,
+            content: None,
             animations: Vec::new(),
             transitions: Vec::new(),
             custom_properties: BTreeMap::new(),
@@ -356,6 +359,7 @@ impl ComputedStyle {
                 flex: FlexStyle::default(),
                 grid: GridStyle::default(),
                 z_index: 0,
+                content: None,
                 animations: Vec::new(),
                 transitions: Vec::new(),
                 custom_properties: parent.custom_properties.clone(),
@@ -533,6 +537,10 @@ impl ComputedStyle {
         }
         if let Some(radius) = &declarations.border_radius {
             style.border.radius = radius.clone();
+        } else if declarations.border_radius_inherit {
+            style.border.radius = parent
+                .map(|parent| parent.border.radius.clone())
+                .unwrap_or_default();
         }
         if let Some(width) = &declarations.outline_width {
             style.border.outline_width = width.clone();
@@ -548,6 +556,7 @@ impl ComputedStyle {
         }
 
         // ---- effects ----------------------------------------------------
+        style.content = declarations.content.clone();
         if let Some(opacity) = declarations.opacity {
             style.effects.opacity = opacity;
         }

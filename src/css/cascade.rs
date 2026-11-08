@@ -12,7 +12,7 @@ use super::computed::ComputedStyle;
 use super::parser::{self, RawDeclaration};
 use super::properties::Declarations;
 use super::properties::transition::{self, Keyframes};
-use super::selector::{Element, Selector, Specificity, parse_selector_list};
+use super::selector::{Element, PseudoElement, Selector, Specificity, parse_selector_list};
 use super::values::Length;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -323,6 +323,7 @@ impl Stylesheet {
         element: &Element<'_>,
         ancestors: &[Element<'_>],
         viewport: Viewport,
+        pseudo: Option<PseudoElement>,
     ) -> Vec<(&'a StyleRule, Specificity)> {
         let mut matched = Vec::new();
         for rule in &self.rules {
@@ -333,6 +334,9 @@ impl Stylesheet {
             }
             let mut best: Option<Specificity> = None;
             for selector in &rule.selectors {
+                if selector.pseudo_element() != pseudo {
+                    continue;
+                }
                 if selector.matches(element, ancestors) {
                     best = Some(match best {
                         Some(current) if current.key() >= selector.specificity.key() => current,
@@ -370,9 +374,35 @@ impl<'a> Cascade<'a> {
         inline: &[RawDeclaration],
         defaults: &[RawDeclaration],
     ) -> ComputedStyle {
+        self.compute_filtered(element, ancestors, parent, inline, defaults, None)
+    }
+
+    /// Compute the style of a generated `::before`/`::after` box. Only rules
+    /// whose subject targets that pseudo-element participate; inherited
+    /// properties come from the originating element.
+    pub fn compute_pseudo(
+        &self,
+        element: &Element<'_>,
+        ancestors: &[Element<'_>],
+        pseudo: PseudoElement,
+        parent: &ComputedStyle,
+    ) -> ComputedStyle {
+        self.compute_filtered(element, ancestors, Some(parent), &[], &[], Some(pseudo))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn compute_filtered(
+        &self,
+        element: &Element<'_>,
+        ancestors: &[Element<'_>],
+        parent: Option<&ComputedStyle>,
+        inline: &[RawDeclaration],
+        defaults: &[RawDeclaration],
+        pseudo: Option<PseudoElement>,
+    ) -> ComputedStyle {
         let mut matched: Vec<Matched<'_>> = self
             .stylesheet
-            .rules_for(element, ancestors, self.viewport)
+            .rules_for(element, ancestors, self.viewport, pseudo)
             .into_iter()
             .flat_map(|(rule, specificity)| {
                 rule.declarations.iter().map(move |declaration| Matched {

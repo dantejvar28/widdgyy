@@ -76,6 +76,10 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str, current: Color) -
             decl.transform_origin = Some(parse_position(value));
             true
         }
+        "content" => {
+            decl.content = parse_content(value);
+            true
+        }
         "clip-path" | "-webkit-clip-path" => {
             decl.clip_path = parse_clip_path(value);
             true
@@ -169,6 +173,21 @@ fn parse_position(value: &str) -> (Length, Length) {
         x.unwrap_or(Length::Percent(50.0)),
         y.unwrap_or(Length::Percent(50.0)),
     )
+}
+
+fn parse_content(value: &str) -> Option<String> {
+    let text = value.trim();
+    if text.is_empty() || text.eq_ignore_ascii_case("none") || text.eq_ignore_ascii_case("normal") {
+        return None;
+    }
+    let inner = text
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .or_else(|| {
+            text.strip_prefix('\'')
+                .and_then(|rest| rest.strip_suffix('\''))
+        })?;
+    Some(inner.replace("\\\"", "\"").replace("\\'", "'"))
 }
 
 fn parse_mask_mode_list(value: &str) -> Vec<crate::css::properties::MaskMode> {

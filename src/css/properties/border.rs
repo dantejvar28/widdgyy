@@ -69,6 +69,10 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str, current: Color) -
             true
         }
         "border-radius" => {
+            if value.trim().eq_ignore_ascii_case("inherit") {
+                decl.border_radius_inherit = true;
+                return true;
+            }
             // The slash form (`10px / 20px`) describes elliptical corners.
             // Vello paints circular corners; use the horizontal radii.
             let horizontal = value.split('/').next().unwrap_or(value);

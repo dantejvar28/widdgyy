@@ -233,8 +233,85 @@ impl<'a> LayoutEngine<'a> {
         let content_height = node.layout.content_height;
         let offset_x = node.layout.content_x;
         let offset_y = node.layout.content_y;
+        // Generated ::before/::after boxes use the parent's padding box as
+        // their containing block, like absolutely positioned boxes in CSS.
+        let padding_box_x = node.layout.border.left;
+        let padding_box_y = node.layout.border.top;
+        let padding_box_width =
+            (node.layout.width - node.layout.border.left - node.layout.border.right).max(0.0);
+        let padding_box_height =
+            (node.layout.height - node.layout.border.top - node.layout.border.bottom).max(0.0);
 
         for child in &mut node.children {
+            if child.pseudo_element.is_some()
+                && matches!(child.style.position, Position::Absolute | Position::Fixed)
+            {
+                self.layout_node(child, viewport, padding_box_width, padding_box_height);
+                let context = viewport.context(
+                    child.style.text.font_size_px,
+                    padding_box_width,
+                    padding_box_height,
+                );
+                let left = child
+                    .style
+                    .left
+                    .as_ref()
+                    .map(|value| value.resolve(&context, Axis::Horizontal));
+                let right = child
+                    .style
+                    .right
+                    .as_ref()
+                    .map(|value| value.resolve(&context, Axis::Horizontal));
+                let top = child
+                    .style
+                    .top
+                    .as_ref()
+                    .map(|value| value.resolve(&context, Axis::Vertical));
+                let bottom = child
+                    .style
+                    .bottom
+                    .as_ref()
+                    .map(|value| value.resolve(&context, Axis::Vertical));
+                let mut width = child.layout.width;
+                let mut height = child.layout.height;
+                if child.style.width.is_auto()
+                    && let (Some(left), Some(right)) = (left, right)
+                {
+                    width = (padding_box_width - left - right).max(0.0);
+                }
+                if child.style.height.is_auto()
+                    && let (Some(top), Some(bottom)) = (top, bottom)
+                {
+                    height = (padding_box_height - top - bottom).max(0.0);
+                }
+                child.layout.width = width;
+                child.layout.height = height;
+                child.layout.content_width = (width
+                    - child.layout.border.left
+                    - child.layout.border.right
+                    - child.layout.padding.left
+                    - child.layout.padding.right)
+                    .max(0.0);
+                child.layout.content_height = (height
+                    - child.layout.border.top
+                    - child.layout.border.bottom
+                    - child.layout.padding.top
+                    - child.layout.padding.bottom)
+                    .max(0.0);
+                let x = match (left, right) {
+                    (Some(left), _) => left,
+                    (None, Some(right)) => padding_box_width - right - width,
+                    _ => 0.0,
+                };
+                let y = match (top, bottom) {
+                    (Some(top), _) => top,
+                    (None, Some(bottom)) => padding_box_height - bottom - height,
+                    _ => 0.0,
+                };
+                child.layout.x = padding_box_x + x;
+                child.layout.y = padding_box_y + y;
+                continue;
+            }
             match child.style.position {
                 Position::Absolute | Position::Fixed => {
                     self.layout_node(child, viewport, content_width, content_height);

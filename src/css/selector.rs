@@ -67,6 +67,13 @@ pub enum Pseudo {
     Where(Vec<Selector>),
 }
 
+/// Generated boxes. Only `::before` and `::after` are supported.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PseudoElement {
+    Before,
+    After,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AttrOp {
     Exists,
@@ -93,6 +100,7 @@ pub struct Compound {
     pub classes: Vec<String>,
     pub attributes: Vec<AttrSelector>,
     pub pseudos: Vec<Pseudo>,
+    pub pseudo_element: Option<PseudoElement>,
 }
 
 impl Compound {
@@ -100,7 +108,8 @@ impl Compound {
         let mut spec = Specificity {
             ids: u32::from(self.id.is_some()),
             classes: self.classes.len() as u32 + self.attributes.len() as u32,
-            types: u32::from(self.tag.as_deref().is_some_and(|tag| tag != "*")),
+            types: u32::from(self.tag.as_deref().is_some_and(|tag| tag != "*"))
+                + u32::from(self.pseudo_element.is_some()),
         };
         for pseudo in &self.pseudos {
             spec = spec.combine(match pseudo {
@@ -175,6 +184,13 @@ impl Selector {
         if compounds.is_empty() {
             return Err("empty selector".to_string());
         }
+        if compounds
+            .iter()
+            .take(compounds.len().saturating_sub(1))
+            .any(|compound| compound.pseudo_element.is_some())
+        {
+            return Err("pseudo-elements are only allowed on the last compound".to_string());
+        }
         let _ = pending_combinator;
 
         let mut specificity = Specificity::ZERO;
@@ -187,6 +203,14 @@ impl Selector {
             combinators,
             specificity,
         })
+    }
+
+    /// Pseudo-element targeted by this selector, if any. Pseudo-elements only
+    /// make sense on the subject (last) compound.
+    pub fn pseudo_element(&self) -> Option<PseudoElement> {
+        self.compounds
+            .last()
+            .and_then(|compound| compound.pseudo_element)
     }
 
     pub fn matches(&self, element: &Element<'_>, ancestors: &[Element<'_>]) -> bool {
@@ -275,6 +299,9 @@ impl fmt::Display for Compound {
         }
         for pseudo in &self.pseudos {
             write!(f, ":{pseudo:?}")?;
+        }
+        if let Some(pseudo) = self.pseudo_element {
+            write!(f, "::{pseudo:?}")?;
         }
         Ok(())
     }
@@ -418,6 +445,9 @@ fn merge_compound(target: &mut Compound, source: Compound) {
     target.classes.extend(source.classes);
     target.attributes.extend(source.attributes);
     target.pseudos.extend(source.pseudos);
+    if source.pseudo_element.is_some() {
+        target.pseudo_element = source.pseudo_element;
+    }
 }
 
 /// Parse a selector list (`a, b, c`).
@@ -545,9 +575,32 @@ fn parse_compound(input: &str) -> Result<(Compound, usize), String> {
                 has_any = true;
             }
             ':' => {
-                let (pseudo, consumed) = parse_pseudo(&input[index..])?;
-                compound.pseudos.push(pseudo);
-                index += consumed;
+                if input[index..].starts_with("::") {
+                    let (name, consumed) = read_identifier(&input[index + 2..])?;
+                    let pseudo = match name.to_ascii_lowercase().as_str() {
+                        "before" => PseudoElement::Before,
+                        "after" => PseudoElement::After,
+                        other => {
+                            return Err(format!("unsupported pseudo-element: ::{other}"));
+                        }
+                    };
+                    compound.pseudo_element = Some(pseudo);
+                    index += 2 + consumed;
+                } else {
+                    let (name, name_len) = read_identifier(&input[index + 1..])?;
+                    if name.eq_ignore_ascii_case("before") || name.eq_ignore_ascii_case("after") {
+                        compound.pseudo_element = Some(if name.eq_ignore_ascii_case("before") {
+                            PseudoElement::Before
+                        } else {
+                            PseudoElement::After
+                        });
+                        index += 1 + name_len;
+                    } else {
+                        let (pseudo, consumed) = parse_pseudo(&input[index..])?;
+                        compound.pseudos.push(pseudo);
+                        index += consumed;
+                    }
+                }
                 has_any = true;
             }
             _ => break,

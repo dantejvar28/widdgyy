@@ -413,6 +413,7 @@ Supported:
 - Descendant: `.panel text`
 - Child: `.panel > text`
 - Pseudo-classes: `:root`, `:first-child`, `:last-child`, `:only-child`, `:nth-child()`, `:nth-last-child()`, `:not()`, `:is()` (also `:matches()`/`:any()`), `:where()`
+- Generated boxes: `::before`, `::after` (legacy `:before`/`:after` are accepted). Other pseudo-elements are rejected.
 
 Parsed but not matched:
 
@@ -545,7 +546,7 @@ Gradients: `linear-gradient()`, `repeating-linear-gradient()`, `radial-gradient(
 - `border-top-width`, `border-right-width`, `border-bottom-width`, `border-left-width`
 - `border-top-style`, `border-right-style`, `border-bottom-style`, `border-left-style`
 - `border-top-color`, `border-right-color`, `border-bottom-color`, `border-left-color`
-- `border-radius`, `border-top-left-radius`, `border-top-right-radius`, `border-bottom-right-radius`, `border-bottom-left-radius`
+- `border-radius` (including `border-radius: inherit`), `border-top-left-radius`, `border-top-right-radius`, `border-bottom-right-radius`, `border-bottom-left-radius`
 - `outline`, `outline-width`, `outline-style`, `outline-color`, `outline-offset`
 - `border-image-source` (`url()` only), `border-image-slice` (including `fill`), `border-image-width`, `border-image-outset`, `border-image-repeat`, `border-image` shorthand
 
@@ -607,6 +608,33 @@ Filter and mask behavior:
 
 `text-shadow` is rendered with a real GPU Gaussian blur on both the video and no-video paths. Scenes with any spatial filter use the offscreen layer path, which falls back to the sampled text-shadow approximation.
 
+### Generated content (`::before` / `::after`)
+
+```css
+.markets-panel { position: relative; overflow: hidden; border-radius: 14px; }
+.markets-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(255,255,255,0.20), transparent 45%);
+  pointer-events: none;
+}
+.markets-panel::after {
+  content: "LIVE";
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  color: #fff;
+}
+```
+
+- `content` accepts quoted strings, `none` and `normal`. `content: none`/`normal` produces no box. `attr()`, counters, quotes, images and `content: url()` are not implemented.
+- `::before` is inserted before the element's children; `::after` after them. Both are painted above the element's own background and border and below/above the other children according to source order and `z-index`.
+- A generated box participates in layout as a normal box. With `position: absolute`, its containing block is the parent's padding box, so `inset: 0` fills it. `left`/`right` or `top`/`bottom` with an auto width/height stretch the box between the insets.
+- `border-radius: inherit` copies the originating element's radius; this is the only property that currently supports the `inherit` keyword explicitly.
+- `pointer-events` is accepted as a no-op so browser-oriented stylesheets keep loading.
+
 ### Flex
 
 - `flex`, `flex-direction`, `flex-wrap`, `flex-flow`
@@ -644,7 +672,9 @@ This is the complete list of known unsupported or partially supported behavior. 
 
 - All interaction: hover, focus, active, pointer, cursor, keyboard, clicks. The wallpaper is display-only.
 - Sibling combinators `+` and `~` (parsed but never match).
-- `:has()`, `:first-of-type`, `:last-of-type`, `:nth-of-type()`, `:empty`, `:target`, form pseudo-classes and pseudo-elements (`::before`, `::after`, `::selection`, ...).
+- `:has()`, `:first-of-type`, `:last-of-type`, `:nth-of-type()`, `:empty`, `:target` and form pseudo-classes.
+- Pseudo-elements other than `::before`/`::after`: `::marker`, `::first-line`, `::first-letter`, `::selection`, `::placeholder`, etc.
+- `content` features beyond quoted strings and `none`/`normal`: `attr()`, counters, quote keywords, `content: url()` and images.
 
 ### Layout
 

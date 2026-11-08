@@ -168,7 +168,7 @@ Implemented in the renderer:
 - Layout: flex (direction, wrap, justify, align-*, gap, order, grow/shrink/basis) and CSS grid (templates, auto-flow, explicit placement, spans, stretching).
 - Animations: `@keyframes` applied at runtime for transform, opacity, color, background-color, text-shadow and custom properties; timing functions, delay, direction, iteration and fill modes.
 - Media queries: width/height, orientation, `prefers-reduced-motion`, `prefers-color-scheme`.
-- Selectors: type, `*`, `.class`, `#id`, attribute selectors with `=`, `~=`, `|=`, `^=`, `$=`, `*=`, descendant/child combinators, `:root`, `:first-child`, `:last-child`, `:only-child`, `:nth-child()`, `:nth-last-child()`, `:not()`, `:is()`, `:where()`.
+- Selectors: type, `*`, `.class`, `#id`, attribute selectors with `=`, `~=`, `|=`, `^=`, `$=`, `*=`, descendant/child combinators, `:root`, `:first-child`, `:last-child`, `:only-child`, `:nth-child()`, `:nth-last-child()`, `:not()`, `:is()`, `:where()`, and generated `::before`/`::after` boxes with string `content`.
 
 The exhaustive property-by-property reference and the complete list of unsupported features live in the [Configuration & Styling Guide](docs/Configuration%20%26%20Styling%20Guide.md#supported-css-properties). Highlights of the limits:
 
@@ -177,6 +177,7 @@ The exhaustive property-by-property reference and the complete list of unsupport
 - `transition*` is parsed but not wired; layout-affecting animations are pending.
 - `backdrop-filter` requires the video fast path; `mask-composite` supports only additive composition.
 - Spatial filters below `mask-image`/`mix-blend-mode` and blend modes across offscreen groups are not supported.
+- Pseudo-elements other than `::before`/`::after`; generated content is limited to string `content` (no `attr()`, counters or images).
 - `@import` is rejected; `@layer` blocks are flattened without layer ordering.
 
 ## Performance and memory

@@ -355,6 +355,8 @@ pub struct Declarations {
     pub border_style: Option<Edges<BorderStyle>>,
     pub border_color: Option<Edges<Color>>,
     pub border_radius: Option<Edges<Length>>,
+    pub border_radius_inherit: bool,
+    pub content: Option<String>,
     pub border_image_source: Option<String>,
     pub border_image_slice: Option<(Edges<Length>, bool)>,
     pub border_image_width: Option<Edges<Length>>,
@@ -486,6 +488,11 @@ fn apply_misc(decl: &mut Declarations, name: &str, value: &str) -> bool {
             } else if let Ok(number) = value.parse::<i32>() {
                 decl.z_index = Some(number);
             }
+            true
+        }
+        "pointer-events" => {
+            // Display-only wallpaper: accepted so browser CSS keeps loading,
+            // but there is no input handling to disable.
             true
         }
         "visibility" => {
