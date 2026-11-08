@@ -2,11 +2,11 @@
 
 Widdgyy is an open-source desktop ricing engine for Wayland that turns your wallpaper into a living workspace.
 
-Create clocks, images, videos, text, weather panels, system monitors and API-powered stickers that are rendered directly on the desktop background layer. Everything is configured with JSON and styled with CSS, so you can build highly customized layouts without writing a desktop extension.
+Create clocks, images, videos, text, weather panels, system monitors and API-powered stickers that are rendered directly on the desktop background layer. The scene is described with a small Python DSL (`config.py`) or the legacy `config.jsonc`, and styled with CSS, so you can build highly customized layouts without writing a desktop extension.
 
 ## Architecture
 
-Widdgyy is a native Rust application. There is no Python runtime and no GTK dependency.
+Widdgyy is a native Rust application. There is no embedded Python runtime and no GTK dependency; `config.py` is evaluated by the system `python3` and converted to the same scene document the legacy JSONC loader uses.
 
 | Layer | Technology | Why |
 | --- | --- | --- |
@@ -15,7 +15,8 @@ Widdgyy is a native Rust application. There is no Python runtime and no GTK depe
 | Text | `cosmic-text` + Vello glyph runs | Shaping, fallback fonts, wrapping and cacheable glyph runs without Pango |
 | Images / GIF | `image` | Decoded once, bounded cache, shared through `Arc` |
 | Video | GStreamer `playbin` + `appsink` (NV12) | Y/UV planes are uploaded to wgpu and converted by a shader; no GTK widget, overlay or CPU RGBA conversion |
-| Styling | Built-in CSS engine | Typed style modules, cascade, variables, shorthands, media queries |
+| Styling | Built-in CSS engine | Typed style modules, cascade, variables, shorthands, media queries, offscreen filter/mask layers |
+| Scene config | Python DSL + legacy JSONC | `config.py` runs on the system `python3` with a 3 s timeout; both formats produce the same schema |
 
 The scene is described by `config.py` (preferred) or the legacy `config.jsonc`; the CSS class model is preserved in both, so `styles.css` keeps working. Migrate with `widdgyy --migrate-config config.jsonc > config.py`.
 
@@ -23,10 +24,12 @@ The scene is described by `config.py` (preferred) or the legacy `config.jsonc`; 
 
 ## Features
 
-- **CSS, not ad-hoc properties:** selectors, specificity, `!important`, inheritance, custom properties (`--accent` / `var()`), `calc()`, `min()/max()/clamp()`, media queries, shorthands, gradients, shadows, borders, transforms, clipping, flex and grid.
+- **Python scene DSL:** `config.py` with `Text`, `Clock`, `ApiText`, `Video`, `Image`, `Gif`, `HBox`, `VBox`, `Grid`; loops and constants are allowed, styling stays in CSS.
+- **CSS, not ad-hoc properties:** selectors, specificity, `!important`, inheritance, custom properties (`--accent` / `var()`), `calc()`/`min()`/`max()`/`clamp()`, media queries, shorthands, gradients, shadows, borders, transforms, clipping, flex and grid.
+- **Browser-like effects:** recursive offscreen layers for nested `filter: blur()`/`drop-shadow()`, `backdrop-filter` on video, multi-layer masks with `mask-mode`, and `border-image` with slice/width/outset/repeat.
 - **Static CSS parsed once:** the frame loop never parses colors, lengths or selectors.
 - **Bounded caches:** text shaping and media assets have hard limits; reloading drops the old scene and releases its assets.
-- **Animations:** `@keyframes` for transform, opacity, colors and background-color, with delay/duration/direction/iteration/fill-mode.
+- **Animations:** `@keyframes` for transform, opacity, colors, background-color, text-shadow and custom properties, with delay/duration/direction/iteration/fill-mode.
 - **Diagnostics:** `widdgyy --check-css` lists unsupported properties and at-rules.
 - **Hot reload:** editing `config.py`, `config.jsonc` or `styles.css` rebuilds the scene without restarting.
 - **API stickers:** requests run on worker threads and report through a channel; the render loop never blocks on the network.
@@ -97,41 +100,38 @@ Widdgyy reads:
 - `~/.config/widdgyy/config.jsonc` (legacy fallback)
 - `~/.config/widdgyy/styles.css`
 
-A minimal example:
+A minimal Python config:
+
+```python
+from widdgyy import ApiText, Clock, HBox, Video
+
+stickers = [
+    Video("assets/wallpaper.mp4", cls="background", z=-1),
+    HBox(
+        Clock("%H:%M", cls="clock"),
+        anchor="center",
+    ),
+]
+```
+
+`config.py` is executed with the system `python3` (3 s timeout) and must define a top-level `stickers` list. Every node takes `cls=` for CSS; containers take children positionally:
+
+```python
+HBox(Clock("%H:%M", cls="clock"), Text("Widdgyy", cls="brand"), cls="panel")
+```
+
+The legacy `config.jsonc` uses the same scene schema and still works:
 
 ```jsonc
 {
   "stickers": [
-    {
-      "type": "media",
-      "path": "assets/wallpaper.mp4",
-      "width": "100%",
-      "height": "100%",
-      "z_index": -1,
-      "loop": true,
-      "class": "background"
-    },
-    {
-      "type": "vbox",
-      "class": "panel",
-      "anchor": "center",
-      "padding": 24,
-      "spacing": 12,
-      "align_items": "center",
-      "children": [
-        { "type": "clock", "class": "clock", "format": "%H:%M" },
-        { "type": "text", "class": "subtitle", "text": "Widdgyy" }
-      ]
-    }
+    { "type": "media", "path": "assets/wallpaper.mp4", "class": "background", "z_index": -1 },
+    { "type": "clock", "class": "clock", "anchor": "center", "format": "%H:%M" }
   ]
 }
 ```
 
 ```css
-:root {
-  --accent: #c7a7ff;
-}
-
 .panel {
   display: flex;
   flex-direction: column;
@@ -152,30 +152,32 @@ A minimal example:
 }
 ```
 
-See [docs/Configuration & Styling Guide.md](docs/Configuration%20%26%20Styling%20Guide.md) for the full schema and property reference, and [docs/Architecture & Memory.md](docs/Architecture%20%26%20Memory.md) for the lifecycle and memory rules.
+See [docs/Configuration & Styling Guide.md](docs/Configuration%20%26%20Styling%20Guide.md) for the complete DSL reference (every node type and field), the exhaustive CSS property list, and the complete list of unsupported features. See [docs/Architecture & Memory.md](docs/Architecture%20%26%20Memory.md) for the lifecycle and memory rules.
 
 ## CSS support
 
 Implemented in the renderer:
 
-- Colors: named, `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()`, `rgba()`, `hsl()`, `hsla()`, `transparent`, `currentColor`, legacy `r, g, b, a`.
-- Lengths: `px`, `%`, `em`, `rem`, `ex`, `ch`, `vw`, `vh`, `vmin`, `vmax`, `pt`, `pc`, `in`, `cm`, `mm`, `fr`, `auto`, `calc()`.
-- Box: `display`, width/height/min/max, margins, padding, `box-sizing`, `overflow`, `aspect-ratio`. `position`/insets are parsed; sticker anchoring is still controlled by the JSON `anchor` field.
-- Background: color, images (`url()`), linear/radial/conic gradients, position, size, repeat, clip/origin, blend mode.
-- Border/outline: width, style (solid/dashed/dotted), color, radius, outline.
-- Text: family, size, weight, style, line-height, letter/word spacing, alignment, decoration, transform, white-space, wrapping, overflow/ellipsis, shadows. `font-stretch`, `font-variant-caps` and `vertical-align` are parsed but not applied by the shaper yet.
-- Effects: opacity, box-shadow (including inset), text-shadow, color filters, root-level `blur()`/`drop-shadow()`, individual translate/rotate/scale, transform/transform-origin, clip-path shapes and `path()`, isolation, object-fit/object-position.
-- Layout: flex (direction, justify, align-*, gap, order, grow/shrink/basis) and CSS grid templates/auto-flow. `flex-wrap` and explicit `grid-column`/`grid-row` placement are parsed; layout currently uses a single flex line and auto-placement.
-- Animations: `@keyframes` applied at runtime for `transform`, `opacity`, `color` and `background-color`; timing functions, delay, direction, iteration and fill modes. Transitions and layout-affecting animations are still pending.
-- Media queries: width/height, orientation, `prefers-reduced-motion`, `prefers-color-scheme` parsing.
-- Selectors: type, `*`, `.class`, `#id`, `[attr]`, descendant/child combinators, `:root`, `:first-child`, `:last-child`, `:only-child`, `:nth-child()`, `:not()`, `:is()`, `:where()`.
+- Colors: named, `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()`, `rgba()`, `hsl()`, `hsla()`, `oklch()`, `oklab()`, `lab()`, `lch()`, `hwb()`, `color()`, `color-mix()`, `transparent`, `currentColor`, legacy `r, g, b, a`.
+- Lengths: `px`, `%`, `em`, `rem`, `ex`, `ch`, `vw`, `vh`, `vmin`, `vmax`, `pt`, `pc`, `in`, `cm`, `mm`, `fr`, `auto`, `calc()`, `min()`, `max()`, `clamp()`.
+- Box: `display`, width/height/min/max, margins, padding, `box-sizing`, `overflow`, `aspect-ratio`, `position`/insets, `z-index`, `visibility`.
+- Background: color, multiple image layers, `url()`, linear/radial/conic gradients, position, size, repeat, clip/origin, blend mode.
+- Border/outline: width, style, color, radius, outline, `border-image` with source/slice/width/outset/repeat and the shorthand.
+- Text: family, size, weight, style, line-height, letter/word spacing, alignment, decoration, transform, white-space, wrapping, overflow/ellipsis, shadows, `font` shorthand.
+- Effects: opacity, box-shadow (including inset), text-shadow, color filters, nested `blur()`/`drop-shadow()`, individual translate/rotate/scale, transform/transform-origin, clip-path shapes and `path()`, isolation, object-fit/object-position, multi-layer masks with `mask-mode`, `backdrop-filter` on video.
+- Layout: flex (direction, wrap, justify, align-*, gap, order, grow/shrink/basis) and CSS grid (templates, auto-flow, explicit placement, spans, stretching).
+- Animations: `@keyframes` applied at runtime for transform, opacity, color, background-color, text-shadow and custom properties; timing functions, delay, direction, iteration and fill modes.
+- Media queries: width/height, orientation, `prefers-reduced-motion`, `prefers-color-scheme`.
+- Selectors: type, `*`, `.class`, `#id`, attribute selectors with `=`, `~=`, `|=`, `^=`, `$=`, `*=`, descendant/child combinators, `:root`, `:first-child`, `:last-child`, `:only-child`, `:nth-child()`, `:nth-last-child()`, `:not()`, `:is()`, `:where()`.
 
-Not implemented yet (tracked explicitly rather than silently ignored):
+The exhaustive property-by-property reference and the complete list of unsupported features live in the [Configuration & Styling Guide](docs/Configuration%20%26%20Styling%20Guide.md#supported-css-properties). Highlights of the limits:
 
-- `blur()`/`drop-shadow()` work on root-level nodes via an offscreen layer; nested spatial filters, `backdrop-filter`, masks and border-image are still pending.
-- SVG `clip-path: url(...)`.
-- `@import` (inline the file instead).
-- Animation property interpolation and transitions.
+- Sibling combinators `+`/`~` never match; interaction pseudo-classes are rejected (display-only).
+- `border-image` supports local `url()` sources only; `double`/`groove`/`ridge`/`inset`/`outset` borders paint as solid.
+- `transition*` is parsed but not wired; layout-affecting animations are pending.
+- `backdrop-filter` requires the video fast path; `mask-composite` supports only additive composition.
+- Spatial filters below `mask-image`/`mix-blend-mode` and blend modes across offscreen groups are not supported.
+- `@import` is rejected; `@layer` blocks are flattened without layer ordering.
 
 ## Performance and memory
 
@@ -198,7 +200,7 @@ Measured with the real 1080p30 video config on the development machine (GTX 1650
 src/
   api.rs                 API sticker worker
   app/                   runtime, hot reload, scheduling
-  config/                JSON5 loader
+  config/                Python DSL runner + JSON5 loader + migration
   css/
     values/              color, length, angle, shadow, gradient, transform
     properties/          box-model, background, border, text, effects, flex, grid, transitions
@@ -209,10 +211,11 @@ src/
   layout/                box model, flex, grid
   media/                 GStreamer video backend
   platform/              Wayland layer-shell host
-  render/                Vello painters + wgpu surface
+  render/                Vello painters, filter/mask layers, wgpu surface
   scene/                 scene graph
   text/                  shaping + cache
-tests/offscreen_render.rs
+python/widdgyy/          Python config DSL (nodes, build)
+tests/                   layout, paint, filters, masks, config tests
 ```
 
 ## Contributing

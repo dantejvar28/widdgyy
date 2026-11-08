@@ -76,7 +76,7 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str, current: Color) -
             decl.transform_origin = Some(parse_position(value));
             true
         }
-        "clip-path" | "mask" | "-webkit-clip-path" => {
+        "clip-path" | "-webkit-clip-path" => {
             decl.clip_path = parse_clip_path(value);
             true
         }

@@ -5,23 +5,26 @@ This document records the design decisions of the Rust rewrite and the lifecycle
 ## Pipeline
 
 ```
-config.jsonc ──► ConfigLoader ──► Scene graph
-                                     │
+config.py ──► python3 -m widdgyy.build ─┐
+                                        ├─► ConfigLoader ──► Scene graph
+config.jsonc ───────────────────────────┘                        │
 styles.css ───► Stylesheet ──► Cascade ──► ComputedStyle (typed modules)
-                                     │
-                                  LayoutEngine ──► LayoutBox per node
-                                     │
-                            Painter (Vello Scene)
-                                     │
-                         GpuRenderer (wgpu + Vello)
-                                     │
-                            wlr-layer-shell surface
+                                                                │
+                                                     LayoutEngine ──► LayoutBox per node
+                                                                │
+                                              Painter (Vello scenes + layer tree)
+                                                                │
+                                              GpuRenderer (Vello + wgpu passes)
+                                                                │
+                                                     wlr-layer-shell surface
 ```
 
+- `config.py` is evaluated by the system `python3` in a subprocess with a 3 s timeout; its JSON output goes through the same loader as `config.jsonc`. A broken Python config keeps the previous scene.
 - Styles are parsed once. The cascade runs on load, hot reload and resize only.
 - Layout runs on load, hot reload, resize and when text content changes (clock/API).
 - Painting runs only when the scene is dirty: a clock second, a GIF/video frame, an API result, a resize or a reload.
 - The fast video path draws a background video as a single textured quad and composites a cached Vello overlay. Vello only re-rasterizes the overlay when clocks/API/text/resize change, not per video frame.
+- Scenes with spatial filters use a recursive offscreen layer tree: each group rasterizes into an accumulation texture, child groups composite into it, and the group's filter/clip/opacity is applied when it composites into its parent.
 - The Wayland event loop waits 200 ms when idle and 16 ms while animated media/API work is active.
 
 ## Style modules
@@ -32,12 +35,12 @@ Each family owns its parser and painter:
 | --- | --- | --- |
 | Box model | `css/properties/box_model.rs` | `layout/` |
 | Background | `css/properties/background.rs` | `render/box_painter.rs` |
-| Border/outline | `css/properties/border.rs` | `render/box_painter.rs` |
+| Border/outline/border-image | `css/properties/border.rs` | `render/box_painter.rs` |
 | Text | `css/properties/text.rs` | `render/text_painter.rs` |
-| Effects | `css/properties/effects.rs` | `render/effects_painter.rs` |
+| Effects/filters/masks | `css/properties/effects.rs` | `render/effects_painter.rs`, `render/filter.rs`, `render/box_painter.rs` |
 | Flex | `css/properties/flex.rs` | `layout/` |
 | Grid | `css/properties/grid.rs` | `layout/` |
-| Animation | `css/properties/transition.rs` | runtime (parsed values ready) |
+| Animation | `css/properties/transition.rs` | `animation.rs` (sampled values), painters |
 
 Painters read typed `ComputedStyle` fields. They never compare property-name strings, which keeps nesting shallow and avoids per-frame parsing.
 
@@ -59,6 +62,7 @@ Painters read typed `ComputedStyle` fields. They never compare property-name str
 ### Images and GIFs
 
 - Images are decoded once into `peniko::ImageData` and shared through `Arc`.
+- `mask-mode: alpha` on an opaque URL image uses a cached white-RGB copy with the original alpha, so Vello's luminance mask resolves to the source alpha. This cache is bounded like the image cache.
 - The image cache is capped at 64 entries and pruned on reload.
 - GIFs are decoded once with hard limits: 240 frames and 64 M pixels. Playback only advances an index; it does not decode per frame.
 
@@ -74,8 +78,10 @@ Painters read typed `ComputedStyle` fields. They never compare property-name str
 
 ### GPU
 
-- `GpuRenderer` owns the surface, Vello renderer, intermediate texture and blitter.
-- Resizing recreates only the intermediate texture; the surface and device stay alive.
+- `GpuRenderer` owns the surface, Vello renderer, intermediate texture, blitter, filter compositor and layer textures.
+- Filter layers reuse a scratch Vello target and one set of blur textures. Each nesting depth lazily allocates one full-screen accumulation texture (and a shared clip-mask scratch), so simple scenes do not pay for the eight-level cap.
+- Shadow and backdrop filters use separate `FilterCompositor` instances at half resolution; their textures are reused across frames.
+- Resizing recreates the intermediate, scratch, blur, shadow and backdrop textures and drops the accumulation pool; the surface and device stay alive.
 - The renderer is dropped before the layer surface (`Drop for WaylandState`), matching the required Wayland/wgpu destruction order.
 - Vello's image atlas is internal and bounded by the images referenced in the current scene.
 
@@ -113,7 +119,10 @@ The video path uses NVDEC/NV12, avoids the per-frame CPU RGBA conversion, and co
 
 ## Known limitations
 
-- Animation interpolation is not wired to the painters yet (values and keyframes are parsed).
-- General CSS filters are parsed but not painted; Vello does not expose a generic layer filter in the current integration.
-- `@import` is rejected with a log message.
-- External SVG clip paths are not fetched.
+- Nested filters are supported through the offscreen layer graph, but filters below `mask-image`/`mix-blend-mode` are painted inline. `mask-composite` only supports additive composition.
+- Group nesting is capped at 8 levels; deeper groups are composited flat with a warning.
+- `backdrop-filter` requires the video fast path; a transparent layer surface cannot sample the desktop without compositor support.
+- `transition*` is parsed but not wired to style changes; layout-affecting animations are pending.
+- `@import` is rejected with a log message; `@layer` blocks are flattened without ordering.
+- External SVG clip paths and `clip-path: url(...)` are not fetched.
+- The CSS support matrix (including parsed-only properties) is maintained in the Configuration & Styling Guide.

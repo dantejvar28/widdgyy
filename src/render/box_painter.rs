@@ -301,7 +301,9 @@ pub fn paint_background(
 
     canvas.push_clip_layer(vello::peniko::Fill::NonZero, *transform, &shape);
 
-    for (index, image) in background.images.iter().enumerate() {
+    // CSS paints the first background layer on top. Draw the list from the
+    // last layer to the first so earlier entries end up in front.
+    for (index, image) in background.images.iter().enumerate().rev() {
         match image {
             BackgroundImage::Gradient(gradient) => {
                 if let Some(brush) = gradient_brush(gradient, width, height, &context) {
@@ -375,6 +377,20 @@ pub fn paint_background(
                     image: &image,
                     sampler,
                 };
+                let blend = match background.blend_mode {
+                    Mix::Normal => None,
+                    mix => Some(mix),
+                };
+                if let Some(mix) = blend {
+                    let layer_shape = Rect::new(0.0, 0.0, width as f64, height as f64);
+                    canvas.push_layer(
+                        vello::peniko::Fill::NonZero,
+                        mix,
+                        1.0,
+                        *transform,
+                        &layer_shape,
+                    );
+                }
                 draw_tiles(
                     canvas,
                     transform,
@@ -384,6 +400,9 @@ pub fn paint_background(
                     (origin_x + origin_width, origin_y + origin_height),
                     repeat,
                 );
+                if blend.is_some() {
+                    canvas.pop_layer();
+                }
             }
         }
     }
