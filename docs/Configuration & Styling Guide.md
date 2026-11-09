@@ -619,12 +619,12 @@ Filter and mask behavior:
 - Layer nesting is capped at 8 levels. Deeper groups are composited flat and a warning is logged once.
 - When a node has several spatial filters, `blur()` wins over `drop-shadow()` and multiple blur radii collapse to the largest one.
 - Spatial filters below `mask-image` or `mix-blend-mode` are painted inline (those properties wrap the subtree in one Vello layer); this is logged once.
-- `backdrop-filter: blur(Npx)` only works with a video wallpaper on the fast path. The largest blur radius in the scene is used; the video is rendered offscreen at 35% resolution with two separable blur iterations and blended through a panel coverage mask. A scene with spatial filters uses the full layer path, where `backdrop-filter` is ignored.
+- `backdrop-filter: blur(Npx)` only works with a video wallpaper on the fast path. The largest blur radius in the scene is used; the video is rendered offscreen at 35% resolution with two separable blur iterations, scissored to the union of the backdrop panels, and blended through a panel coverage mask. A scene with spatial filters uses the full layer path, where `backdrop-filter` is ignored.
 - `mask-image` accepts a comma-separated list of gradients and `url()` masks. `mask-size`, `mask-position`, `mask-repeat` and `mask-mode` (`match-source`, `alpha`, `luminance`) are list-valued and match each layer; missing values repeat from the start of the list. Multiple layers accumulate additively, matching the initial `mask-composite: add`. `match-source` resolves to alpha for CSS images (rasters and gradients). Gradient stops are painted as white with their alpha; a luminance mask multiplies the image's luminance by its alpha.
 - `mask-composite` operators other than additive composition are not implemented.
 - `mix-blend-mode` only blends against content painted earlier in the same Vello scene/group. Blend modes are not carried across offscreen group boundaries.
 
-`text-shadow` is rendered with a real GPU Gaussian blur on both the video and no-video paths. The glyph mask is cached and blur slots are reused until the quantized sigma changes, so animated shadow colour/offset does not re-blur every frame. Scenes with any spatial filter use the offscreen layer path, which falls back to the sampled text-shadow approximation.
+`text-shadow` is rendered with a real GPU Gaussian blur on both the video and no-video paths. The glyph mask is cached, blur slots are reused until the quantized sigma changes, and the blur/composite passes are scissored to the shadow bounding box, so animated shadow colour/offset does not re-blur every frame. Scenes with any spatial filter use the offscreen layer path, which falls back to the sampled text-shadow approximation.
 
 ### Generated content (`::before` / `::after`)
 
@@ -844,6 +844,7 @@ If the new config cannot be parsed, the previous scene is kept and the error is 
 RUST_LOG=widdgyy=debug ./target/release/widdgyy
 widdgyy --check-css
 widdgyy --dump-layout --viewport 1280x720
+./scripts/perf-sample.sh 10
 ```
 
 `--check-css` prints the active config and stylesheet, counts stickers/rules/keyframes/fonts and lists:

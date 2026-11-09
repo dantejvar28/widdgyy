@@ -445,6 +445,48 @@ fn collect_node_shadows(node: &Node, draws: &mut Vec<ShadowDraw>) {
     }
 }
 
+/// Bounding box of all text that has a shadow, expanded by a conservative
+/// margin so animated offsets/radii stay inside the scissor. Returns
+/// `[x, y, width, height]` in screen pixels.
+pub fn shadow_region(scene: &StickerScene, viewport: crate::css::Viewport) -> Option<[f32; 4]> {
+    const MARGIN: f32 = 128.0;
+    fn visit(node: &Node, bounds: &mut Option<[f32; 4]>) {
+        if node.visible
+            && node.style.display != crate::css::Display::None
+            && matches!(node.kind, NodeKind::Text(_))
+            && !node.text_shadows().is_empty()
+        {
+            let x0 = node.absolute_x - MARGIN;
+            let y0 = node.absolute_y - MARGIN;
+            let x1 = node.absolute_x + node.layout.width + MARGIN;
+            let y1 = node.absolute_y + node.layout.height + MARGIN;
+            *bounds = Some(match *bounds {
+                Some([bx, by, bw, bh]) => [
+                    bx.min(x0),
+                    by.min(y0),
+                    (bx + bw).max(x1) - bx.min(x0),
+                    (by + bh).max(y1) - by.min(y0),
+                ],
+                None => [x0, y0, x1 - x0, y1 - y0],
+            });
+        }
+        for child in &node.children {
+            visit(child, bounds);
+        }
+    }
+    let mut bounds = None;
+    for root in &scene.roots {
+        visit(root, &mut bounds);
+    }
+    bounds.and_then(|[x, y, width, height]| {
+        let x0 = x.max(0.0);
+        let y0 = y.max(0.0);
+        let x1 = (x + width).min(viewport.width).max(x0);
+        let y1 = (y + height).min(viewport.height).max(y0);
+        (x1 > x0 && y1 > y0).then_some([x0, y0, x1 - x0, y1 - y0])
+    })
+}
+
 /// True when the node has a filtered descendant (its own filter is handled by
 /// the caller).
 pub fn subtree_has_filter(node: &Node) -> bool {

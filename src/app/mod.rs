@@ -71,8 +71,10 @@ pub struct Runtime {
     layers: Vec<FilterLayer>,
     shadow_items: Vec<ShadowDraw>,
     shadow_mask: VelloScene,
+    shadow_region: Option<[f32; 4]>,
     backdrop_mask: VelloScene,
     backdrop_radius: Option<f32>,
+    backdrop_region: Option<[f32; 4]>,
     last_shadow_build: Instant,
     viewport: Viewport,
     last_tick: Instant,
@@ -139,8 +141,10 @@ impl Runtime {
             layers: Vec::new(),
             shadow_items: Vec::new(),
             shadow_mask: VelloScene::new(),
+            shadow_region: None,
             backdrop_mask: VelloScene::new(),
             backdrop_radius: None,
+            backdrop_region: None,
             last_shadow_build: Instant::now() - Duration::from_secs(1),
             viewport,
             last_tick: Instant::now(),
@@ -190,6 +194,14 @@ impl Runtime {
     /// Largest `backdrop-filter: blur()` radius in the scene, if any.
     pub fn backdrop_radius(&self) -> Option<f32> {
         self.backdrop_radius
+    }
+
+    pub fn shadow_region(&self) -> Option<[f32; 4]> {
+        self.shadow_region
+    }
+
+    pub fn backdrop_region(&self) -> Option<[f32; 4]> {
+        self.backdrop_region
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -428,6 +440,7 @@ impl Runtime {
     /// and runs whenever a shadow value changes.
     fn rebuild_shadows(&mut self) {
         self.shadow_items = crate::render::painter::collect_shadow_draws(&self.scene);
+        self.shadow_region = crate::render::painter::shadow_region(&self.scene, self.viewport);
     }
 
     /// Rasterize the glyph coverage of all shadowed text into the mask scene.
@@ -447,19 +460,42 @@ impl Runtime {
     fn rebuild_backdrop_mask(&mut self) {
         self.backdrop_mask = VelloScene::new();
         self.backdrop_radius = None;
+        self.backdrop_region = None;
         let mut radius: Option<f32> = None;
-        fn visit(node: &Node, radius: &mut Option<f32>) {
+        let mut region: Option<[f32; 4]> = None;
+        fn visit(node: &Node, radius: &mut Option<f32>, region: &mut Option<[f32; 4]>) {
             if let Some(blur) = node.backdrop_blur() {
                 *radius = Some(radius.map_or(blur, |current: f32| current.max(blur)));
+                let margin = blur * 2.5 + 8.0;
+                let x0 = node.absolute_x - margin;
+                let y0 = node.absolute_y - margin;
+                let x1 = node.absolute_x + node.layout.width + margin;
+                let y1 = node.absolute_y + node.layout.height + margin;
+                *region = Some(match *region {
+                    Some([bx, by, bw, bh]) => [
+                        bx.min(x0),
+                        by.min(y0),
+                        (bx + bw).max(x1) - bx.min(x0),
+                        (by + bh).max(y1) - by.min(y0),
+                    ],
+                    None => [x0, y0, x1 - x0, y1 - y0],
+                });
             }
             for child in &node.children {
-                visit(child, radius);
+                visit(child, radius, region);
             }
         }
         for root in &self.scene.roots {
-            visit(root, &mut radius);
+            visit(root, &mut radius, &mut region);
         }
         self.backdrop_radius = radius;
+        self.backdrop_region = region.and_then(|[x, y, width, height]| {
+            let x0 = x.max(0.0);
+            let y0 = y.max(0.0);
+            let x1 = (x + width).min(self.viewport.width).max(x0);
+            let y1 = (y + height).min(self.viewport.height).max(y0);
+            (x1 > x0 && y1 > y0).then_some([x0, y0, x1 - x0, y1 - y0])
+        });
         if radius.is_none() {
             return;
         }

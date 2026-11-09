@@ -178,6 +178,7 @@ fn applies_group_opacity_and_clip_mask() {
             opacity: 0.5,
             mask: Some(&mask_view),
             source_premultiplied: false,
+            scissor: None,
         },
         true,
     );
@@ -255,6 +256,7 @@ fn composites_premultiplied_group_through_a_filter() {
             opacity: 1.0,
             mask: None,
             source_premultiplied: false,
+            scissor: None,
         },
         true,
     );
@@ -271,6 +273,7 @@ fn composites_premultiplied_group_through_a_filter() {
             opacity: 1.0,
             mask: None,
             source_premultiplied: true,
+            scissor: None,
         },
         true,
     );

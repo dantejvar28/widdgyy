@@ -62,6 +62,31 @@ pub struct LayerSpec<'a> {
     /// True when the source already stores premultiplied alpha (layer groups);
     /// false for Vello scenes and video frames.
     pub source_premultiplied: bool,
+    /// Optional fragment scissor in this compositor's texture coordinates.
+    pub scissor: Option<Scissor>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Scissor {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Scissor {
+    fn clamped(self, width: u32, height: u32) -> Option<Self> {
+        let x = self.x.min(width);
+        let y = self.y.min(height);
+        let x1 = self.x.saturating_add(self.width).min(width);
+        let y1 = self.y.saturating_add(self.height).min(height);
+        (x1 > x && y1 > y).then_some(Self {
+            x,
+            y,
+            width: x1 - x,
+            height: y1 - y,
+        })
+    }
 }
 
 /// One item of a layer group, in paint order.
@@ -387,6 +412,34 @@ impl FilterCompositor {
                 opacity: 1.0,
                 mask: None,
                 source_premultiplied: false,
+                scissor: None,
+            },
+            clear,
+        );
+    }
+
+    /// Like [`Self::encode_layer`] but restricts fragment work to a scissor.
+    pub fn encode_layer_scissored(
+        &mut self,
+        queue: &Queue,
+        encoder: &mut CommandEncoder,
+        target: &TextureView,
+        filter: Option<SpatialFilter>,
+        clear: bool,
+        scissor: Option<Scissor>,
+    ) {
+        let source = self.layer_view.clone();
+        self.encode_composite(
+            queue,
+            encoder,
+            target,
+            LayerSpec {
+                source: &source,
+                filter,
+                opacity: 1.0,
+                mask: None,
+                source_premultiplied: false,
+                scissor,
             },
             clear,
         );
@@ -411,7 +464,9 @@ impl FilterCompositor {
             opacity,
             mask,
             source_premultiplied,
+            scissor,
         } = spec;
+        let scissor = scissor.and_then(|scissor| scissor.clamped(self.width, self.height));
 
         let Some(filter) = filter else {
             self.composite(
@@ -427,6 +482,7 @@ impl FilterCompositor {
                 (0.0, 0.0),
                 [0.0; 4],
                 clear,
+                scissor,
             );
             return;
         };
@@ -462,6 +518,7 @@ impl FilterCompositor {
             &self.blur_a_view,
             &self.premultiply_pipeline,
             &source_bind_group,
+            scissor,
         );
         for iteration in 0..iterations {
             self.blur_pass(
@@ -469,6 +526,7 @@ impl FilterCompositor {
                 &self.blur_b_view,
                 &self.blur_pipeline,
                 &self.blur_v_bind_group,
+                scissor,
             );
             if iteration + 1 < iterations {
                 self.blur_pass(
@@ -476,6 +534,7 @@ impl FilterCompositor {
                     &self.blur_a_view,
                     &self.blur_pipeline,
                     &self.blur_h2_bind_group,
+                    scissor,
                 );
             }
         }
@@ -500,6 +559,7 @@ impl FilterCompositor {
             offset,
             color,
             clear,
+            scissor,
         );
     }
 
@@ -509,6 +569,7 @@ impl FilterCompositor {
         target: &TextureView,
         pipeline: &RenderPipeline,
         bind_group: &BindGroup,
+        scissor: Option<Scissor>,
     ) {
         let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("widdgyy filter blur"),
@@ -526,6 +587,9 @@ impl FilterCompositor {
             occlusion_query_set: None,
             multiview_mask: None,
         });
+        if let Some(scissor) = scissor {
+            pass.set_scissor_rect(scissor.x, scissor.y, scissor.width, scissor.height);
+        }
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, bind_group, &[]);
         pass.draw(0..3, 0..1);
@@ -546,6 +610,7 @@ impl FilterCompositor {
         offset: (f32, f32),
         color: [f32; 4],
         clear: bool,
+        scissor: Option<Scissor>,
     ) {
         let params = composite_params(
             mode.code(),
@@ -604,6 +669,9 @@ impl FilterCompositor {
             occlusion_query_set: None,
             multiview_mask: None,
         });
+        if let Some(scissor) = scissor {
+            pass.set_scissor_rect(scissor.x, scissor.y, scissor.width, scissor.height);
+        }
         pass.set_pipeline(&self.composite_pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
         pass.draw(0..3, 0..1);

@@ -178,13 +178,16 @@ impl WaylandState {
                 log::error!("backdrop mask render failed: {error:#}");
             }
             if plan.shadows_updated
-                && let Err(error) = gpu.render_shadows(self.runtime.shadow_items())
+                && let Err(error) =
+                    gpu.render_shadows(self.runtime.shadow_items(), self.runtime.shadow_region())
             {
                 log::error!("shadow render failed: {error:#}");
             }
-            if let Err(error) =
-                gpu.render_composite(plan.video.as_ref(), self.runtime.backdrop_radius())
-            {
+            if let Err(error) = gpu.render_composite(
+                plan.video.as_ref(),
+                self.runtime.backdrop_radius(),
+                self.runtime.backdrop_region(),
+            ) {
                 log::error!("video composite failed: {error:#}");
             }
         } else if plan.filtered {

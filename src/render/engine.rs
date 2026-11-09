@@ -19,7 +19,7 @@ use wgpu::{
 
 use super::ShadowDraw;
 use super::compositor::{Compositor, MAX_SHADOW_ITEMS, MAX_SHADOW_SLOTS, ShadowItem, VideoFrame};
-use super::filter::{FilterCompositor, FilterLayer, LayerItem, LayerSpec, SpatialFilter};
+use super::filter::{FilterCompositor, FilterLayer, LayerItem, LayerSpec, Scissor, SpatialFilter};
 
 pub struct GpuRenderer {
     pub device: Device,
@@ -34,6 +34,7 @@ pub struct GpuRenderer {
     /// Quantized sigma currently stored in each shadow blur slot. The mask is
     /// re-blurred only when a slot's value changes.
     shadow_sigmas: Vec<Option<f32>>,
+    shadow_scissor: Option<Scissor>,
     backdrop_filter: FilterCompositor,
     backdrop_source: Texture,
     backdrop_source_view: TextureView,
@@ -180,6 +181,7 @@ impl GpuRenderer {
             filter,
             shadow_filter,
             shadow_sigmas: vec![None; MAX_SHADOW_SLOTS],
+            shadow_scissor: None,
             backdrop_filter,
             backdrop_source,
             backdrop_source_view,
@@ -217,6 +219,7 @@ impl GpuRenderer {
         self.shadow_filter
             .resize(&self.device, shadow_width, shadow_height);
         self.shadow_sigmas.fill(None);
+        self.shadow_scissor = None;
         let (backdrop_width, backdrop_height) = backdrop_extent(width, height);
         self.backdrop_filter
             .resize(&self.device, backdrop_width, backdrop_height);
@@ -282,6 +285,7 @@ impl GpuRenderer {
     /// applied per frame by `render_shadows` without touching Vello again.
     pub fn render_shadow_mask(&mut self, scene: &Scene) -> Result<()> {
         self.shadow_sigmas.fill(None);
+        self.shadow_scissor = None;
         let (width, height) = shadow_extent(self.width, self.height);
         let params = RenderParams {
             base_color: Color::new([0.0, 0.0, 0.0, 0.0]),
@@ -302,7 +306,19 @@ impl GpuRenderer {
 
     /// Blur the cached shadow mask once per distinct radius and upload the
     /// shadow list. Radii beyond the slot budget reuse the nearest slot.
-    pub fn render_shadows(&mut self, shadows: &[ShadowDraw]) -> Result<()> {
+    pub fn render_shadows(
+        &mut self,
+        shadows: &[ShadowDraw],
+        region: Option<[f32; 4]>,
+    ) -> Result<()> {
+        let (width, height) = shadow_extent(self.width, self.height);
+        let scissor = region.and_then(|region| {
+            scaled_scissor(region, crate::app::SHADOW_MASK_SCALE, width, height)
+        });
+        if self.shadow_scissor != scissor {
+            self.shadow_sigmas.fill(None);
+            self.shadow_scissor = scissor;
+        }
         let mut sigmas: Vec<f32> = Vec::new();
         let mut items = Vec::with_capacity(shadows.len().min(MAX_SHADOW_ITEMS));
         for shadow in shadows.iter().take(MAX_SHADOW_ITEMS) {
@@ -339,12 +355,13 @@ impl GpuRenderer {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("widdgyy shadow blur"),
                 });
-            self.shadow_filter.encode_layer(
+            self.shadow_filter.encode_layer_scissored(
                 &self.queue,
                 &mut encoder,
                 self.compositor.shadow_slot_view(slot),
                 filter,
                 true,
+                scissor,
             );
             self.queue.submit(Some(encoder.finish()));
             self.shadow_sigmas[slot] = Some(*sigma);
@@ -378,10 +395,20 @@ impl GpuRenderer {
         &mut self,
         video: Option<&VideoFrame>,
         backdrop_radius: Option<f32>,
+        backdrop_region: Option<[f32; 4]>,
     ) -> Result<()> {
         self.compositor
             .prepare_video(&self.device, &self.queue, video);
         if let (Some(video), Some(radius)) = (video, backdrop_radius) {
+            let (backdrop_width, backdrop_height) = backdrop_extent(self.width, self.height);
+            let scissor = backdrop_region.and_then(|region| {
+                scaled_scissor(
+                    region,
+                    crate::app::BACKDROP_MASK_SCALE,
+                    backdrop_width,
+                    backdrop_height,
+                )
+            });
             self.compositor.render_video_to(
                 &self.device,
                 &self.queue,
@@ -406,6 +433,7 @@ impl GpuRenderer {
                     opacity: 1.0,
                     mask: None,
                     source_premultiplied: false,
+                    scissor,
                 },
                 true,
             );
@@ -607,6 +635,7 @@ impl GpuRenderer {
                 opacity: layer.opacity,
                 mask: mask.as_ref(),
                 source_premultiplied,
+                scissor: None,
             },
             clear,
         );
@@ -636,6 +665,7 @@ impl GpuRenderer {
                 opacity: 1.0,
                 mask: None,
                 source_premultiplied,
+                scissor: None,
             },
             clear,
         );
@@ -824,6 +854,23 @@ fn quantize_shadow_sigma(sigma: f32) -> f32 {
     ((sigma.max(0.0) / step).round() * step).max(0.0)
 }
 
+fn scaled_scissor(region: [f32; 4], scale: f64, width: u32, height: u32) -> Option<Scissor> {
+    let x0 = (region[0] as f64 * scale).floor().max(0.0) as u32;
+    let y0 = (region[1] as f64 * scale).floor().max(0.0) as u32;
+    let x1 = ((region[0] + region[2]) as f64 * scale)
+        .ceil()
+        .clamp(0.0, width as f64) as u32;
+    let y1 = ((region[1] + region[3]) as f64 * scale)
+        .ceil()
+        .clamp(0.0, height as f64) as u32;
+    (x1 > x0 && y1 > y0).then_some(Scissor {
+        x: x0.min(width),
+        y: y0.min(height),
+        width: x1.saturating_sub(x0),
+        height: y1.saturating_sub(y0),
+    })
+}
+
 fn nearest_slot(sigmas: &[f32], sigma: f32) -> usize {
     sigmas
         .iter()
@@ -835,7 +882,22 @@ fn nearest_slot(sigmas: &[f32], sigma: f32) -> usize {
 
 #[cfg(test)]
 mod shadow_cache_tests {
-    use super::quantize_shadow_sigma;
+    use super::{quantize_shadow_sigma, scaled_scissor};
+
+    #[test]
+    fn scales_and_clamps_scissors() {
+        let scissor = scaled_scissor([100.0, 50.0, 200.0, 100.0], 0.5, 960, 540).unwrap();
+        assert_eq!(
+            (scissor.x, scissor.y, scissor.width, scissor.height),
+            (50, 25, 100, 50)
+        );
+        let clamped = scaled_scissor([-10.0, -10.0, 20.0, 20.0], 1.0, 1920, 1080).unwrap();
+        assert_eq!(
+            (clamped.x, clamped.y, clamped.width, clamped.height),
+            (0, 0, 10, 10)
+        );
+        assert!(scaled_scissor([2000.0, 0.0, 10.0, 10.0], 1.0, 1920, 1080).is_none());
+    }
 
     #[test]
     fn quantizes_shadow_sigmas_to_half_pixels() {
