@@ -101,9 +101,9 @@ Release build, 1920x1080, real config from `~/.config/widdgyy`:
 | Scenario | CPU (one core) | RSS after warm-up |
 | --- | --- | --- |
 | Text/clock only (`--config` test fixture) | ~0.2% | ~165 MB |
-| 1080p looping video + clock + API stickers | ~16% | ~475 MB, stable over 60 s |
+| 1080p looping video + glow + market panel/backdrop | ~20–28% | ~500–515 MB, stable |
 
-The video path uses NVDEC/NV12, avoids the per-frame CPU RGBA conversion, and composites the static Vello overlay only when it changes. `appsink` uses `sync=true`, `max-buffers=1` and `drop=true` so the decoder does not run ahead of the display. RSS was sampled every 10 s for 60 s with no upward trend.
+The video path uses NVDEC/NV12, avoids the per-frame CPU RGBA conversion, and composites the static Vello overlay only when it changes. `appsink` uses `sync=true`, `max-buffers=1` and `drop=true` so the decoder does not run ahead of the display. Shadow blur slots are cached/quantized and backdrop/shadows use region scissors; total GPU utilization on the development GTX 1650 dropped from roughly 37% to 25–32% including the desktop baseline (~22%). Readings are noisy because `nvidia-smi` reports the whole GPU; use `scripts/perf-sample.sh` for same-machine comparisons.
 
 ## Removed leak sources from the Python version
 
@@ -121,7 +121,7 @@ The video path uses NVDEC/NV12, avoids the per-frame CPU RGBA conversion, and co
 
 ## Conformance harness
 
-- `widdgyy --dump-layout --viewport WxH` resolves styles and layout without opening a window and prints JSON boxes, generated pseudo boxes and text line rectangles.
+- `widdgyy --dump-layout --viewport WxH` resolves styles and layout without opening a window and prints JSON boxes, generated pseudo boxes, text-shadow counts and text line rectangles.
 - `scripts/css-conformance.sh` runs each `tests/conformance/<name>` fixture against Firefox headless through Marionette (no geckodriver), comparing boxes and line rects with per-fixture tolerances.
 - The harness is optional: it skips cleanly when Firefox or Marionette is unavailable, so the normal test suite has no browser dependency.
 
@@ -130,8 +130,10 @@ The video path uses NVDEC/NV12, avoids the per-frame CPU RGBA conversion, and co
 - Nested filters are supported through the offscreen layer graph, but filters below `mask-image`/`mix-blend-mode` are painted inline. `mask-composite` only supports additive composition.
 - Group nesting is capped at 8 levels; deeper groups are composited flat with a warning.
 - `backdrop-filter` requires the video fast path; a transparent layer surface cannot sample the desktop without compositor support.
-- `transition*` is parsed but not wired to style changes; layout-affecting animations are pending.
+- Transitions animate opacity, transform, colors, text-shadow and custom properties on style changes; layout-affecting transitions and animations are pending.
 - `@import` is rejected with a log message; `@layer` blocks are flattened without ordering.
 - External SVG clip paths and `clip-path: url(...)` are not fetched.
 - The CSS support matrix (including parsed-only properties) is maintained in the Configuration & Styling Guide.
 - Media preference changes are picked up on reload; there is no live desktop-theme subscription. Output scale factor is still fixed at 1.0, so `resolution` reports 1dppx.
+- GPU text shadows are composited behind the whole overlay texture. An opaque element background painted in the overlay can hide them; without video, a full-screen opaque page background does so.
+- B8 leftovers: overlay static/dynamic caching, dynamic shadow-slot count, and per-pass GPU frame timing.

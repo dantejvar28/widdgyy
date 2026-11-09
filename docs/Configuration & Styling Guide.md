@@ -626,6 +626,8 @@ Filter and mask behavior:
 
 `text-shadow` is rendered with a real GPU Gaussian blur on both the video and no-video paths. The glyph mask is cached, blur slots are reused until the quantized sigma changes, and the blur/composite passes are scissored to the shadow bounding box, so animated shadow colour/offset does not re-blur every frame. Scenes with any spatial filter use the offscreen layer path, which falls back to the sampled text-shadow approximation.
 
+The GPU shadow pass composites shadows **behind the whole overlay texture**. An opaque element background painted inside the overlay can therefore hide them; without a video wallpaper, a full-screen opaque page background does so. Keep glowing text over the video or use a transparent/partially transparent container.
+
 ### Generated content (`::before` / `::after`)
 
 ```css
@@ -824,7 +826,7 @@ The command used for a fixture is:
 widdgyy --dump-layout --config tests/conformance/text-basic/config.py --viewport 800x526
 ```
 
-`--dump-layout` prints JSON with every node's border box, content box, id/classes/tag, generated pseudo-element marker and text line rectangles. Layout comparisons use a tolerance in pixels (default 2 px, configurable per fixture); text widths normally sit within 1–3 px because Firefox and cosmic-text may select slightly different faces or apply different kerning.
+`--dump-layout` prints JSON with every node's border box, content box, id/classes/tag, generated pseudo-element marker, text-shadow count and text line rectangles. Layout comparisons use a tolerance in pixels (default 2 px, configurable per fixture); text widths normally sit within 1–3 px because Firefox and cosmic-text may select slightly different faces or apply different kerning.
 
 ## Hot reload
 

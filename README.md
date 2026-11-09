@@ -181,6 +181,7 @@ The exhaustive property-by-property reference and the complete list of unsupport
 - `font-variation-settings` is parsed but not applied; synthetic small caps are not generated.
 - `vertical-align` only aligns the text block inside its box (no inline formatting context); `text-indent` does not change first-line wrapping.
 - `backdrop-filter` requires the video fast path; `mask-composite` supports only additive composition.
+- GPU text shadows sit behind the overlay texture, so an opaque element/page background can hide them.
 - Spatial filters below `mask-image`/`mix-blend-mode` and blend modes across offscreen groups are not supported.
 - Pseudo-elements other than `::before`/`::after`; generated content is limited to string `content` (no `attr()`, counters or images).
 - `@import` is rejected; `@layer` blocks are flattened without layer ordering.
