@@ -16,7 +16,7 @@ use vello::peniko::Color;
 use crate::css::Stylesheet;
 use crate::css::properties::Declarations;
 use crate::css::properties::transition::{
-    Animation, AnimationDirection, AnimationFillMode, PlayState,
+    Animation, AnimationDirection, AnimationFillMode, PlayState, TimingFunction, Transition,
 };
 use crate::css::values::{self, Length, Shadow, TransformOp};
 use crate::scene::{AnimatedStyle, Node};
@@ -572,6 +572,404 @@ fn lerp_transforms(a: &[TransformOp], b: &[TransformOp], t: f32) -> Option<Vec<T
     Some(output)
 }
 
+/// Effective visual values of a node, including any running animation overlay.
+/// Captured before a scene is replaced so transitions can start from what the
+/// user currently sees.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EffectiveValues {
+    pub opacity: f32,
+    pub transform: Vec<TransformOp>,
+    pub color: Color,
+    pub background_color: Color,
+    pub text_shadows: Vec<Shadow>,
+    pub custom_properties: BTreeMap<String, String>,
+}
+
+impl Default for EffectiveValues {
+    fn default() -> Self {
+        Self {
+            opacity: 1.0,
+            transform: Vec::new(),
+            color: Color::BLACK,
+            background_color: Color::BLACK,
+            text_shadows: Vec::new(),
+            custom_properties: BTreeMap::new(),
+        }
+    }
+}
+
+impl EffectiveValues {
+    fn from_node(node: &Node) -> Self {
+        Self {
+            opacity: node.animated.opacity.unwrap_or(node.style.effects.opacity),
+            transform: node
+                .animated
+                .transform
+                .clone()
+                .unwrap_or_else(|| node.style.effects.transform.clone()),
+            color: node.animated.color.unwrap_or(node.style.text.color),
+            background_color: node
+                .animated
+                .background_color
+                .unwrap_or(node.style.background.color),
+            text_shadows: node
+                .animated
+                .text_shadows
+                .clone()
+                .unwrap_or_else(|| node.style.text.shadows.clone()),
+            custom_properties: node
+                .animated
+                .custom_properties
+                .clone()
+                .unwrap_or_else(|| node.style.custom_properties.clone()),
+        }
+    }
+}
+
+/// A set of non-layout CSS transitions started by a style change.
+pub struct TransitionSet {
+    start: Instant,
+    entries: Vec<TransitionEntry>,
+}
+
+struct TransitionEntry {
+    field: TransitionField,
+    delay: Duration,
+    duration: Duration,
+    timing: TimingFunction,
+}
+
+enum TransitionField {
+    Opacity {
+        from: f32,
+        to: f32,
+    },
+    Transform {
+        from: Vec<TransformOp>,
+        to: Vec<TransformOp>,
+    },
+    Color {
+        from: Color,
+        to: Color,
+    },
+    BackgroundColor {
+        from: Color,
+        to: Color,
+    },
+    TextShadows {
+        from: Vec<Shadow>,
+        to: Vec<Shadow>,
+    },
+    Custom {
+        name: String,
+        from: String,
+        to: String,
+    },
+}
+
+impl TransitionSet {
+    fn compile(
+        previous: &EffectiveValues,
+        style: &crate::css::ComputedStyle,
+        start: Instant,
+    ) -> Option<Self> {
+        let mut entries = Vec::new();
+
+        let transition = |property: &str| -> Option<&Transition> {
+            style.transitions.iter().find(|transition| {
+                transition.property.eq_ignore_ascii_case("all")
+                    || transition.property.eq_ignore_ascii_case(property)
+            })
+        };
+
+        if let Some(transition) = transition("opacity")
+            && transition.duration > Duration::ZERO
+            && (previous.opacity - style.effects.opacity).abs() > 0.001
+        {
+            entries.push(TransitionEntry {
+                field: TransitionField::Opacity {
+                    from: previous.opacity,
+                    to: style.effects.opacity,
+                },
+                delay: transition.delay,
+                duration: transition.duration,
+                timing: transition.timing,
+            });
+        }
+
+        if let Some(transition) = transition("transform")
+            && transition.duration > Duration::ZERO
+            && previous.transform != style.effects.transform
+            && lerp_transforms(&previous.transform, &style.effects.transform, 0.5).is_some()
+        {
+            entries.push(TransitionEntry {
+                field: TransitionField::Transform {
+                    from: previous.transform.clone(),
+                    to: style.effects.transform.clone(),
+                },
+                delay: transition.delay,
+                duration: transition.duration,
+                timing: transition.timing,
+            });
+        }
+
+        if let Some(transition) = transition("color")
+            && transition.duration > Duration::ZERO
+            && previous.color != style.text.color
+        {
+            entries.push(TransitionEntry {
+                field: TransitionField::Color {
+                    from: previous.color,
+                    to: style.text.color,
+                },
+                delay: transition.delay,
+                duration: transition.duration,
+                timing: transition.timing,
+            });
+        }
+
+        if let Some(transition) = transition("background-color")
+            && transition.duration > Duration::ZERO
+            && previous.background_color != style.background.color
+        {
+            entries.push(TransitionEntry {
+                field: TransitionField::BackgroundColor {
+                    from: previous.background_color,
+                    to: style.background.color,
+                },
+                delay: transition.delay,
+                duration: transition.duration,
+                timing: transition.timing,
+            });
+        }
+
+        if let Some(transition) = transition("text-shadow")
+            && transition.duration > Duration::ZERO
+            && previous.text_shadows != style.text.shadows
+            && !previous.text_shadows.is_empty()
+            && !style.text.shadows.is_empty()
+        {
+            entries.push(TransitionEntry {
+                field: TransitionField::TextShadows {
+                    from: previous.text_shadows.clone(),
+                    to: style.text.shadows.clone(),
+                },
+                delay: transition.delay,
+                duration: transition.duration,
+                timing: transition.timing,
+            });
+        }
+
+        let custom_keys: BTreeSet<String> = style
+            .transitions
+            .iter()
+            .flat_map(|transition| {
+                if transition.property.eq_ignore_ascii_case("all") {
+                    previous
+                        .custom_properties
+                        .keys()
+                        .chain(style.custom_properties.keys())
+                        .cloned()
+                        .collect::<Vec<_>>()
+                } else if transition.property.starts_with("--") {
+                    vec![transition.property.clone()]
+                } else {
+                    Vec::new()
+                }
+            })
+            .collect();
+        for name in custom_keys {
+            let Some(transition) = transition(&name) else {
+                continue;
+            };
+            if transition.duration.is_zero() {
+                continue;
+            }
+            let from = previous
+                .custom_properties
+                .get(&name)
+                .cloned()
+                .unwrap_or_default();
+            let to = style
+                .custom_properties
+                .get(&name)
+                .cloned()
+                .unwrap_or_default();
+            if from == to {
+                continue;
+            }
+            entries.push(TransitionEntry {
+                field: TransitionField::Custom { name, from, to },
+                delay: transition.delay,
+                duration: transition.duration,
+                timing: transition.timing,
+            });
+        }
+
+        (!entries.is_empty()).then_some(Self { start, entries })
+    }
+
+    pub fn is_active(&self, now: Instant) -> bool {
+        let elapsed = now.saturating_duration_since(self.start);
+        self.entries
+            .iter()
+            .any(|entry| elapsed < entry.delay + entry.duration)
+    }
+
+    pub fn sample(&self, now: Instant) -> (AnimatedStyle, bool) {
+        let elapsed = now.saturating_duration_since(self.start);
+        let mut overlay = AnimatedStyle::default();
+        let mut active = false;
+        for entry in &self.entries {
+            if elapsed < entry.delay {
+                active = true;
+                entry.apply(&mut overlay, 0.0);
+                continue;
+            }
+            let local = elapsed - entry.delay;
+            if local >= entry.duration {
+                entry.apply(&mut overlay, 1.0);
+                continue;
+            }
+            active = true;
+            let progress = local.as_secs_f32() / entry.duration.as_secs_f32().max(f32::EPSILON);
+            entry.apply(&mut overlay, entry.timing.sample(progress));
+        }
+        (overlay, active)
+    }
+}
+
+impl TransitionEntry {
+    fn apply(&self, overlay: &mut AnimatedStyle, t: f32) {
+        match &self.field {
+            TransitionField::Opacity { from, to } => {
+                overlay.opacity = Some(from + (to - from) * t);
+            }
+            TransitionField::Transform { from, to } => {
+                overlay.transform = lerp_transforms(from, to, t)
+                    .or_else(|| Some(if t < 0.5 { from.clone() } else { to.clone() }));
+            }
+            TransitionField::Color { from, to } => {
+                overlay.color = Some(values::color::mix(*from, *to, t));
+            }
+            TransitionField::BackgroundColor { from, to } => {
+                overlay.background_color = Some(values::color::mix(*from, *to, t));
+            }
+            TransitionField::TextShadows { from, to } => {
+                overlay.text_shadows = lerp_shadows(from, to, t)
+                    .or_else(|| Some(if t < 0.5 { from.clone() } else { to.clone() }));
+            }
+            TransitionField::Custom { name, from, to } => {
+                let mut properties = overlay.custom_properties.take().unwrap_or_default();
+                properties.insert(name.clone(), lerp_custom_value(from, to, t));
+                overlay.custom_properties = Some(properties);
+            }
+        }
+    }
+}
+
+fn node_key(path: &str, node: &Node) -> String {
+    match node.pseudo_element {
+        Some(pseudo) => format!("{path}::{pseudo:?}"),
+        None => path.to_string(),
+    }
+}
+
+/// Capture effective styles for every node before a scene is replaced.
+pub fn capture_values(scene: &crate::scene::Scene) -> HashMap<String, EffectiveValues> {
+    fn walk(node: &Node, path: &str, out: &mut HashMap<String, EffectiveValues>) {
+        out.insert(node_key(path, node), EffectiveValues::from_node(node));
+        let mut real = 0;
+        for child in &node.children {
+            if child.pseudo_element.is_some() {
+                walk(child, path, out);
+            } else {
+                walk(child, &format!("{path}/{real}"), out);
+                real += 1;
+            }
+        }
+    }
+    let mut values = HashMap::new();
+    for (index, root) in scene.roots.iter().enumerate() {
+        walk(root, &index.to_string(), &mut values);
+    }
+    values
+}
+
+/// Start transitions for nodes whose computed style changed. The keys in
+/// `previous` come from [`capture_values`] on the old scene.
+pub fn start_transitions(
+    scene: &mut crate::scene::Scene,
+    previous: &HashMap<String, EffectiveValues>,
+    now: Instant,
+) -> (HashMap<u64, TransitionSet>, bool) {
+    fn walk(
+        node: &mut Node,
+        path: &str,
+        previous: &HashMap<String, EffectiveValues>,
+        sets: &mut HashMap<u64, TransitionSet>,
+        active: &mut bool,
+        now: Instant,
+    ) {
+        if let Some(old) = previous.get(&node_key(path, node))
+            && let Some(set) = TransitionSet::compile(old, &node.style, now)
+        {
+            *active |= set.is_active(now);
+            sets.insert(node.uid, set);
+        }
+        let mut real = 0;
+        for child in &mut node.children {
+            if child.pseudo_element.is_some() {
+                walk(child, path, previous, sets, active, now);
+            } else {
+                walk(
+                    child,
+                    &format!("{path}/{real}"),
+                    previous,
+                    sets,
+                    active,
+                    now,
+                );
+                real += 1;
+            }
+        }
+    }
+    let mut sets = HashMap::new();
+    let mut active = false;
+    for (index, root) in scene.roots.iter_mut().enumerate() {
+        walk(
+            root,
+            &index.to_string(),
+            previous,
+            &mut sets,
+            &mut active,
+            now,
+        );
+    }
+    (sets, active)
+}
+
+fn merge_overlay(target: &mut AnimatedStyle, overlay: &AnimatedStyle) {
+    if overlay.opacity.is_some() {
+        target.opacity = overlay.opacity;
+    }
+    if overlay.transform.is_some() {
+        target.transform = overlay.transform.clone();
+    }
+    if overlay.color.is_some() {
+        target.color = overlay.color;
+    }
+    if overlay.background_color.is_some() {
+        target.background_color = overlay.background_color;
+    }
+    if overlay.text_shadows.is_some() {
+        target.text_shadows = overlay.text_shadows.clone();
+    }
+    if overlay.custom_properties.is_some() {
+        target.custom_properties = overlay.custom_properties.clone();
+    }
+}
+
 /// Compile every animated node in the scene and reset its overlay.
 pub fn prepare_scene(
     scene: &mut crate::scene::Scene,
@@ -608,7 +1006,8 @@ fn prepare_node(
 /// not force the text overlay to be repainted.
 pub fn update_scene(
     scene: &mut crate::scene::Scene,
-    sets: &HashMap<u64, AnimationSet>,
+    animations: &HashMap<u64, AnimationSet>,
+    transitions: &HashMap<u64, TransitionSet>,
     now: Instant,
 ) -> (bool, bool, bool) {
     let mut changed = false;
@@ -617,7 +1016,8 @@ pub fn update_scene(
     for root in &mut scene.roots {
         update_node(
             root,
-            sets,
+            animations,
+            transitions,
             now,
             &mut changed,
             &mut glow_changed,
@@ -629,26 +1029,45 @@ pub fn update_scene(
 
 fn update_node(
     node: &mut Node,
-    sets: &HashMap<u64, AnimationSet>,
+    animations: &HashMap<u64, AnimationSet>,
+    transitions: &HashMap<u64, TransitionSet>,
     now: Instant,
     changed: &mut bool,
     glow_changed: &mut bool,
     active: &mut bool,
 ) {
-    if let Some(set) = sets.get(&node.uid) {
-        let (overlay, is_active) = set.sample(now);
+    let mut overlay = AnimatedStyle::default();
+    let mut has_overlay = false;
+    if let Some(set) = transitions.get(&node.uid) {
+        let (transition_overlay, is_active) = set.sample(now);
         *active |= is_active;
-        if node.animated != overlay {
-            if glow_only_change(&node.animated, &overlay) {
-                *glow_changed = true;
-            } else {
-                *changed = true;
-            }
-            node.animated = overlay;
+        merge_overlay(&mut overlay, &transition_overlay);
+        has_overlay = true;
+    }
+    if let Some(set) = animations.get(&node.uid) {
+        let (animation_overlay, is_active) = set.sample(now);
+        *active |= is_active;
+        merge_overlay(&mut overlay, &animation_overlay);
+        has_overlay = true;
+    }
+    if has_overlay && node.animated != overlay {
+        if glow_only_change(&node.animated, &overlay) {
+            *glow_changed = true;
+        } else {
+            *changed = true;
         }
+        node.animated = overlay;
     }
     for child in &mut node.children {
-        update_node(child, sets, now, changed, glow_changed, active);
+        update_node(
+            child,
+            animations,
+            transitions,
+            now,
+            changed,
+            glow_changed,
+            active,
+        );
     }
 }
 
@@ -659,4 +1078,79 @@ fn glow_only_change(current: &AnimatedStyle, next: &AnimatedStyle) -> bool {
         && current.background_color == next.background_color
         && (current.text_shadows != next.text_shadows
             || current.custom_properties != next.custom_properties)
+}
+
+#[cfg(test)]
+mod transition_tests {
+    use super::*;
+    use crate::css::properties::transition::Transition;
+    use crate::css::{Stylesheet, Viewport};
+    use crate::scene::Scene;
+
+    fn linear(property: &str, milliseconds: u64) -> Transition {
+        Transition {
+            property: property.to_string(),
+            duration: Duration::from_millis(milliseconds),
+            delay: Duration::ZERO,
+            timing: TimingFunction::Linear,
+        }
+    }
+
+    fn scene_with(css: &str) -> Scene {
+        let sheet = Stylesheet::parse(css);
+        let mut scene = Scene::new(Viewport::default());
+        let mut root = Node::container("hbox", vec!["root".to_string()]);
+        root.children
+            .push(Node::container("vbox", vec!["item".to_string()]));
+        scene.roots.push(root);
+        scene.resolve_styles(&sheet);
+        scene
+    }
+
+    #[test]
+    fn samples_opacity_and_finishes() {
+        let mut style = crate::css::ComputedStyle::default();
+        style.effects.opacity = 1.0;
+        style.transitions = vec![linear("opacity", 100)];
+        let previous = EffectiveValues {
+            opacity: 0.0,
+            ..EffectiveValues::default()
+        };
+        let start = Instant::now();
+        let set = TransitionSet::compile(&previous, &style, start).expect("transition");
+
+        let (overlay, active) = set.sample(start);
+        assert!(active);
+        assert!((overlay.opacity.unwrap() - 0.0).abs() < 1e-6);
+
+        let (overlay, active) = set.sample(start + Duration::from_millis(50));
+        assert!(active);
+        assert!((overlay.opacity.unwrap() - 0.5).abs() < 0.01);
+
+        let (overlay, active) = set.sample(start + Duration::from_millis(100));
+        assert!(!active);
+        assert!((overlay.opacity.unwrap() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn starts_from_old_scene_values() {
+        let old = scene_with(".item { opacity: 0.2; }");
+        let previous = capture_values(&old);
+        let mut new = scene_with(".item { opacity: 1; transition: opacity 100ms linear; }");
+        let start = Instant::now();
+        let (sets, active) = start_transitions(&mut new, &previous, start);
+        assert!(active);
+        assert_eq!(sets.len(), 1);
+
+        let (changed, _, active) = update_scene(&mut new, &HashMap::new(), &sets, start);
+        assert!(changed);
+        assert!(active);
+        let item = &new.roots[0].children[0];
+        assert!((item.animated.opacity.unwrap() - 0.2).abs() < 1e-6);
+
+        let middle = start + Duration::from_millis(50);
+        update_scene(&mut new, &HashMap::new(), &sets, middle);
+        let item = &new.roots[0].children[0];
+        assert!((item.animated.opacity.unwrap() - 0.6).abs() < 0.02);
+    }
 }

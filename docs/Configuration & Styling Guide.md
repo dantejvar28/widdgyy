@@ -680,7 +680,15 @@ Animatable properties: `transform`, `opacity`, `color`, `background-color`, `tex
 
 Multiple animations per node are supported. Shadow lists of different lengths are interpolated by repeating the shorter list, matching CSS. Animating `text-shadow` refreshes the offscreen shadow layer without repainting the text overlay.
 
-`transition`, `transition-property`, `transition-duration`, `transition-delay` and `transition-timing-function` are parsed but not wired to style changes yet. Layout-affecting animations (`width`, `height`, `margin`, `padding`, etc.) are also pending.
+`transition`, `transition-property`, `transition-duration`, `transition-delay` and `transition-timing-function` are applied when the scene styles change (hot reload of `config.py`/`styles.css`). Transitionable fields are `opacity`, `transform`, `color`, `background-color`, `text-shadow` and custom properties; `transition: all` covers them. Animations take precedence over transitions for the same field. Layout properties (`width`, `height`, `margin`, `padding`, `gap`, `top`, `left`, ...) do not transition yet, and newly created/removed nodes start at their target values.
+
+Example:
+
+```css
+.panel {
+  transition: background-color 300ms ease, opacity 200ms linear;
+}
+```
 
 ## Not implemented
 
@@ -739,8 +747,7 @@ This is the complete list of known unsupported or partially supported behavior. 
 
 ### Animation and transitions
 
-- `transition*` (parsed but not wired to style changes).
-- Layout-affecting keyframe animations (`width`, `height`, `margin`, `padding`, `gap`, ...).
+- Layout-affecting transitions (`width`, `height`, `margin`, `padding`, `gap`, `top`, `left`, ...) and layout-affecting keyframe animations.
 - Animating properties other than `transform`, `opacity`, `color`, `background-color`, `text-shadow` and custom properties.
 - Scroll-driven animations, view transitions, `@starting-style`, `animation-timeline`.
 

@@ -41,7 +41,7 @@ Each family owns its parser and painter:
 | Effects/filters/masks | `css/properties/effects.rs` | `render/effects_painter.rs`, `render/filter.rs`, `render/box_painter.rs` |
 | Flex | `css/properties/flex.rs` | `layout/` |
 | Grid | `css/properties/grid.rs` | `layout/` |
-| Animation | `css/properties/transition.rs` | `animation.rs` (sampled values), painters |
+| Animation/transitions | `css/properties/transition.rs` | `animation.rs` (sampled overlays), painters |
 
 Painters read typed `ComputedStyle` fields. They never compare property-name strings, which keeps nesting shallow and avoids per-frame parsing.
 

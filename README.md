@@ -167,6 +167,7 @@ Implemented in the renderer:
 - Effects: opacity, box-shadow (including inset), text-shadow, color filters, nested `blur()`/`drop-shadow()`, individual translate/rotate/scale, transform/transform-origin, clip-path shapes and `path()`, isolation, object-fit/object-position, multi-layer masks with `mask-mode`, `backdrop-filter` on video.
 - Layout: flex (direction, wrap, justify, align-*, gap, order, grow/shrink/basis) and CSS grid (templates, auto-flow, explicit placement, spans, stretching).
 - Animations: `@keyframes` applied at runtime for transform, opacity, color, background-color, text-shadow and custom properties; timing functions, delay, direction, iteration and fill modes.
+- Transitions: hot-reload style changes animate opacity, transform, colors, text-shadow and custom properties with duration/delay/easing; layout transitions are still pending.
 - Media queries: width/height/aspect-ratio, orientation, resolution, `prefers-color-scheme`/`prefers-reduced-motion` from the desktop, `hover`/`pointer`, display mode, media types and `not`/`only`.
 - Selectors: type, `*`, `.class`, `#id`, attribute selectors with `=`, `~=`, `|=`, `^=`, `$=`, `*=`, descendant/child combinators, `:root`, `:first-child`, `:last-child`, `:only-child`, `:nth-child()`, `:nth-last-child()`, `:not()`, `:is()`, `:where()`, and generated `::before`/`::after` boxes with string `content`.
 - Verification: a Firefox headless harness compares layout boxes and text line rectangles against the real browser (`./scripts/css-conformance.sh`).
@@ -175,7 +176,7 @@ The exhaustive property-by-property reference and the complete list of unsupport
 
 - Sibling combinators `+`/`~` never match; interaction pseudo-classes are rejected (display-only).
 - `border-image` supports local `url()` sources only; `double`/`groove`/`ridge`/`inset`/`outset` borders paint as solid.
-- `transition*` is parsed but not wired; layout-affecting animations are pending.
+- Layout-affecting transitions and animations (`width`, `height`, `margin`, `padding`, `gap`, ...) are pending.
 - Media features such as `scripting`, `prefers-contrast` and `forced-colors` are not implemented; unknown features do not match.
 - `font-variation-settings` is parsed but not applied; synthetic small caps are not generated.
 - `vertical-align` only aligns the text block inside its box (no inline formatting context); `text-indent` does not change first-line wrapping.

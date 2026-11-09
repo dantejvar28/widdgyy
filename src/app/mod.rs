@@ -87,6 +87,7 @@ pub struct Runtime {
     shadows_dirty: bool,
     fast_mode: bool,
     animations: HashMap<u64, AnimationSet>,
+    transitions: HashMap<u64, crate::animation::TransitionSet>,
     animations_active: bool,
     last_animation_sample: Instant,
     auto_config: bool,
@@ -154,6 +155,7 @@ impl Runtime {
             shadows_dirty: true,
             fast_mode: false,
             animations: HashMap::new(),
+            transitions: HashMap::new(),
             animations_active: false,
             last_animation_sample: Instant::now() - Duration::from_secs(1),
             auto_config: false,
@@ -299,11 +301,34 @@ impl Runtime {
                 return;
             }
         };
+        // Capture what is currently on screen before replacing the tree so
+        // style changes can transition from the old values.
+        let previous = animation::capture_values(&self.scene);
         self.stylesheet = stylesheet;
         self.scene = scene;
         self.preferences = Preferences::detect();
         self.api.reset();
         self.apply_styles_and_layout();
+
+        let now = Instant::now();
+        self.transitions.clear();
+        let (transitions, transition_active) =
+            animation::start_transitions(&mut self.scene, &previous, now);
+        self.transitions = transitions;
+        self.animations_active |= transition_active;
+        let (changed, glow_changed, overlay_active) =
+            animation::update_scene(&mut self.scene, &self.animations, &self.transitions, now);
+        self.animations_active |= overlay_active;
+        if changed {
+            self.overlay_dirty = true;
+            self.shadows_dirty = true;
+            self.dirty = true;
+        }
+        if glow_changed {
+            self.shadows_dirty = true;
+            self.dirty = true;
+        }
+
         self.config_mtime = mtime(&self.config.path);
         self.css_mtime = mtime(&self.css_path);
         self.dirty = true;
@@ -379,7 +404,7 @@ impl Runtime {
         if animation_due {
             self.last_animation_sample = now;
             let (animation_changed, glow_changed, animation_active) =
-                animation::update_scene(&mut self.scene, &self.animations, now);
+                animation::update_scene(&mut self.scene, &self.animations, &self.transitions, now);
             if animation_changed {
                 self.overlay_dirty = true;
                 self.shadows_dirty = true;
