@@ -22,6 +22,22 @@ The scene is described by `config.py` (preferred) or the legacy `config.jsonc`; 
 
 > **Compatibility note:** the previous Python widget extension point was never a public plugin API (types were hard-coded in the loader), so this rewrite does not remove a supported extension mechanism. If a plugin system is added later, it should be designed explicitly (WASM, Lua or a stable Rust trait).
 
+## Status: alpha
+
+**Current development line: `0.2.0-alpha.1`.**
+
+Widdgyy is usable as a daily wallpaper engine, but it is still **alpha**:
+
+- The `config.py`/`config.jsonc` schema, the supported CSS surface, CLI flags and rendering internals may change between minor releases.
+- Keep a backup of `~/.config/widdgyy` and use `widdgyy --migrate-config` when moving a legacy JSONC config.
+- It is tested primarily on Hyprland with an NVIDIA GTX 1650; other compositors, GPU vendors and fractional-scale setups may need fixes.
+- Known CSS limitations are tracked in the [Configuration & Styling Guide](docs/Configuration%20%26%20Styling%20Guide.md#not-implemented); they are not silent failures.
+- There is no stable API/ABI guarantee yet.
+
+Beta criteria: freeze the config schema and CSS scope for a release, add a CI matrix (distros, compositors, GPU/fallback), run a 24 h video/API soak test, and publish tagged packages with release notes. Until then, pin a commit if you need a reproducible setup and report issues with your distro, compositor, GPU driver and `RUST_LOG=widdgyy=debug`.
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes and known changes.
+
 ## Features
 
 - **Python scene DSL:** `config.py` with `Text`, `Clock`, `ApiText`, `Video`, `Image`, `Gif`, `HBox`, `VBox`, `Grid`; loops and constants are allowed, styling stays in CSS.

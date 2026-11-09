@@ -1,5 +1,7 @@
 # Widdgyy Configuration & Styling Guide
 
+> **Status: alpha (`0.2.0-alpha.1`).** The config schema, CSS surface and CLI may still change; keep a backup of your config and check the [changelog](../CHANGELOG.md) before upgrading.
+
 Widdgyy turns a Wayland wallpaper into a display-only scene. It has three independent inputs:
 
 1. **Scene**: `config.py` (preferred) or the legacy `config.jsonc`. It describes nodes, their classes, anchors, media and data sources.

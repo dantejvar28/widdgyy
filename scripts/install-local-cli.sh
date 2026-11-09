@@ -66,6 +66,8 @@ install_aur_package() {
   local version
   version="$(sed -n 's/^version = "\(.*\)"/\1/p' "${ROOT_DIR}/Cargo.toml" | head -1)"
   version="${version:-0.0.0}"
+  # Arch pkgver cannot contain hyphens; semver pre-release tags use them.
+  version="${version//-/_}"
 
   echo "Creating local package from the working tree..."
   tar -C "${ROOT_DIR}" \
