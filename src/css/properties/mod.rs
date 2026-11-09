@@ -98,6 +98,8 @@ pub enum TextAlign {
     Justify,
     Start,
     End,
+    /// Initial value of `text-align-last`; follows `text-align`.
+    Auto,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -375,11 +377,13 @@ pub struct Declarations {
     pub font_style: Option<FontStyle>,
     pub font_stretch: Option<f32>,
     pub font_variant_caps: Option<text::FontVariantCaps>,
+    pub font_features: Option<Vec<(String, u32)>>,
     pub line_height: Option<LineHeight>,
     pub letter_spacing: Option<Length>,
     pub word_spacing: Option<Length>,
     pub text_align: Option<TextAlign>,
     pub text_align_last: Option<TextAlign>,
+    pub line_clamp: Option<usize>,
     pub text_decoration: Option<TextDecoration>,
     pub text_transform: Option<TextTransform>,
     pub text_indent: Option<Length>,

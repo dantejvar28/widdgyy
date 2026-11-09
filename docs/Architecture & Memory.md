@@ -117,6 +117,12 @@ The video path uses NVDEC/NV12, avoids the per-frame CPU RGBA conversion, and co
 | API thread per interval with no coalescing | Bounded in-flight set per sticker |
 | Image pixbufs retained forever | Bounded `Arc` image cache, pruned on reload |
 
+## Conformance harness
+
+- `widdgyy --dump-layout --viewport WxH` resolves styles and layout without opening a window and prints JSON boxes, generated pseudo boxes and text line rectangles.
+- `scripts/css-conformance.sh` runs each `tests/conformance/<name>` fixture against Firefox headless through Marionette (no geckodriver), comparing boxes and line rects with per-fixture tolerances.
+- The harness is optional: it skips cleanly when Firefox or Marionette is unavailable, so the normal test suite has no browser dependency.
+
 ## Known limitations
 
 - Nested filters are supported through the offscreen layer graph, but filters below `mask-image`/`mix-blend-mode` are painted inline. `mask-composite` only supports additive composition.

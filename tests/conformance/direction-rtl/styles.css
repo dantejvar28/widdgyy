@@ -1,0 +1,9 @@
+.root { width: 500px; height: 200px; background: #ffffff; }
+.rtl {
+  width: 300px;
+  font-family: "DejaVu Sans";
+  font-size: 24px;
+  line-height: 30px;
+  direction: rtl;
+  text-align: start;
+}

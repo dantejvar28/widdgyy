@@ -83,7 +83,11 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str, current: Color) -
             true
         }
         "font-stretch" => {
-            decl.font_stretch = parse_percentage(value);
+            decl.font_stretch = parse_font_stretch(value);
+            true
+        }
+        "font-feature-settings" => {
+            decl.font_features = Some(parse_font_features(value));
             true
         }
         "font-variant" | "font-variant-caps" => {
@@ -126,6 +130,15 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str, current: Color) -
             decl.text_align_last = Some(parse_text_align(value));
             true
         }
+        "line-clamp" | "-webkit-line-clamp" => {
+            decl.line_clamp = value
+                .trim()
+                .parse::<usize>()
+                .ok()
+                .filter(|lines| *lines > 0);
+            true
+        }
+        "-webkit-box-orient" | "-webkit-box-pack" | "-webkit-box-align" => true,
         "text-decoration" => {
             let decoration = decl
                 .text_decoration
@@ -273,7 +286,7 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str, current: Color) -
             apply_font_shorthand(decl, value, current);
             true
         }
-        "text-rendering" | "font-feature-settings" | "font-variation-settings" => true,
+        "text-rendering" | "font-variation-settings" => true,
         _ => false,
     }
 }
@@ -339,9 +352,52 @@ fn parse_font_style(value: &str) -> FontStyle {
     }
 }
 
-fn parse_percentage(value: &str) -> Option<f32> {
-    let text = value.trim().trim_end_matches('%');
-    text.parse::<f32>().ok()
+fn parse_font_stretch(value: &str) -> Option<f32> {
+    let keyword = match value.trim().to_ascii_lowercase().as_str() {
+        "ultra-condensed" => Some(0.50),
+        "extra-condensed" => Some(0.625),
+        "condensed" => Some(0.75),
+        "semi-condensed" => Some(0.875),
+        "normal" => Some(1.0),
+        "semi-expanded" => Some(1.125),
+        "expanded" => Some(1.25),
+        "extra-expanded" => Some(1.5),
+        "ultra-expanded" => Some(2.0),
+        _ => None,
+    };
+    if keyword.is_some() {
+        return keyword;
+    }
+    let text = value.trim();
+    if let Some(percent) = text.strip_suffix('%') {
+        return percent.parse::<f32>().ok().map(|value| value / 100.0);
+    }
+    text.parse::<f32>()
+        .ok()
+        .map(|value| if value > 10.0 { value / 100.0 } else { value })
+}
+
+fn parse_font_features(value: &str) -> Vec<(String, u32)> {
+    if value.trim().eq_ignore_ascii_case("normal") {
+        return Vec::new();
+    }
+    let mut features = Vec::new();
+    for part in super::split_commas(value) {
+        let tokens = super::split_ws(&part);
+        let Some(tag) = tokens.first() else {
+            continue;
+        };
+        let tag = tag.trim().trim_matches('"').trim_matches('\'');
+        if tag.len() != 4 {
+            continue;
+        }
+        let enabled = tokens
+            .get(1)
+            .and_then(|token| token.parse::<u32>().ok())
+            .unwrap_or(1);
+        features.push((tag.to_string(), enabled));
+    }
+    features
 }
 
 fn parse_line_height(value: &str) -> LineHeight {
@@ -363,6 +419,7 @@ fn parse_text_align(value: &str) -> TextAlign {
         "justify" => TextAlign::Justify,
         "start" => TextAlign::Start,
         "end" => TextAlign::End,
+        "auto" => TextAlign::Auto,
         _ => TextAlign::Left,
     }
 }

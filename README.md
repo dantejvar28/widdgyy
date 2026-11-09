@@ -163,18 +163,21 @@ Implemented in the renderer:
 - Box: `display`, width/height/min/max, margins, padding, `box-sizing`, `overflow`, `aspect-ratio`, `position`/insets, `z-index`, `visibility`.
 - Background: color, multiple image layers, `url()`, linear/radial/conic gradients, position, size, repeat, clip/origin, blend mode.
 - Border/outline: width, style, color, radius, outline, `border-image` with source/slice/width/outset/repeat and the shorthand.
-- Text: family, size, weight, style, line-height, letter/word spacing, alignment, decoration, transform, white-space, wrapping, overflow/ellipsis, shadows, `font` shorthand.
+- Text: family, size, weight, style, stretch, live OpenType features, line-height, letter/word spacing, alignment/last-line alignment, indent, direction, decoration, transform, white-space, wrapping, overflow/ellipsis, multi-line `line-clamp`, shadows, `font` shorthand.
 - Effects: opacity, box-shadow (including inset), text-shadow, color filters, nested `blur()`/`drop-shadow()`, individual translate/rotate/scale, transform/transform-origin, clip-path shapes and `path()`, isolation, object-fit/object-position, multi-layer masks with `mask-mode`, `backdrop-filter` on video.
 - Layout: flex (direction, wrap, justify, align-*, gap, order, grow/shrink/basis) and CSS grid (templates, auto-flow, explicit placement, spans, stretching).
 - Animations: `@keyframes` applied at runtime for transform, opacity, color, background-color, text-shadow and custom properties; timing functions, delay, direction, iteration and fill modes.
 - Media queries: width/height, orientation, `prefers-reduced-motion`, `prefers-color-scheme`.
 - Selectors: type, `*`, `.class`, `#id`, attribute selectors with `=`, `~=`, `|=`, `^=`, `$=`, `*=`, descendant/child combinators, `:root`, `:first-child`, `:last-child`, `:only-child`, `:nth-child()`, `:nth-last-child()`, `:not()`, `:is()`, `:where()`, and generated `::before`/`::after` boxes with string `content`.
+- Verification: a Firefox headless harness compares layout boxes and text line rectangles against the real browser (`./scripts/css-conformance.sh`).
 
 The exhaustive property-by-property reference and the complete list of unsupported features live in the [Configuration & Styling Guide](docs/Configuration%20%26%20Styling%20Guide.md#supported-css-properties). Highlights of the limits:
 
 - Sibling combinators `+`/`~` never match; interaction pseudo-classes are rejected (display-only).
 - `border-image` supports local `url()` sources only; `double`/`groove`/`ridge`/`inset`/`outset` borders paint as solid.
 - `transition*` is parsed but not wired; layout-affecting animations are pending.
+- `font-variation-settings` is parsed but not applied; synthetic small caps are not generated.
+- `vertical-align` only aligns the text block inside its box (no inline formatting context); `text-indent` does not change first-line wrapping.
 - `backdrop-filter` requires the video fast path; `mask-composite` supports only additive composition.
 - Spatial filters below `mask-image`/`mix-blend-mode` and blend modes across offscreen groups are not supported.
 - Pseudo-elements other than `::before`/`::after`; generated content is limited to string `content` (no `attr()`, counters or images).

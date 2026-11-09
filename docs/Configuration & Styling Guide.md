@@ -505,7 +505,7 @@ The lists below are the properties the parser accepts. Unknown properties are re
 
 ### Box model and layout
 
-- `display`: `none`, `block`, `inline`, `inline-block`, `flex`, `inline-flex`, `grid`, `inline-grid`. Containers use the flex layout unless the value is `grid`; block/inline/inline-block do not create a distinct formatting context.
+- `display`: `none`, `block`, `inline`, `inline-block`, `flex`, `inline-flex`, `grid`, `inline-grid`, plus the `-webkit-box` alias used by line-clamp markup. Containers use the flex layout unless the value is `grid`; block/inline/inline-block do not create a distinct formatting context.
 - `position`: `static`, `relative`, `absolute`, `fixed`. `sticky` is accepted but behaves as `static`.
 - `top`, `right`, `bottom`, `left`, `inset`, `inset-inline`, `inset-inline-start`, `inset-inline-end`, `inset-block`, `inset-block-start`, `inset-block-end`
 - `width`, `height`, `min-width`, `min-height`, `max-width`, `max-height` (values: `auto`, `none`, `stretch`/`-webkit-fill-available`, `min-content`, `max-content`, `fit-content()`, lengths and percentages)
@@ -562,19 +562,20 @@ Notes:
 
 - `color`
 - `font`, `font-family`, `font-size`, `font-weight`, `font-style`
-- `font-stretch` (parsed, not applied)
-- `font-variant`, `font-variant-caps` (parsed, not applied)
-- `font-feature-settings`, `font-variation-settings`, `text-rendering` (accepted, no effect)
+- `font-stretch` (keyword or percentage; selects the closest face)
+- `font-variant`, `font-variant-caps` (OpenType `smcp`, `c2sc`, `pcap`, `unic`, `titl`; no synthetic caps)
+- `font-feature-settings` (OpenType feature tags such as `"liga" 0` or `"ss01"`)
+- `font-variation-settings`, `text-rendering` (accepted, no effect)
 - `line-height`, `letter-spacing`, `word-spacing`
-- `text-align`, `text-align-last` (parsed, not applied)
+- `text-align`, `text-align-last`
 - `text-decoration`, `text-decoration-line`, `text-decoration-color`, `text-decoration-style`, `text-decoration-thickness`
 - `text-transform`
-- `text-indent` (affects the measured intrinsic width, not the glyph origin)
+- `text-indent` (offsets the first line; wrapping still uses the full width)
 - `white-space`, `text-wrap` (maps `nowrap` to `white-space: nowrap`, otherwise normal), `overflow-wrap`/`word-wrap`, `word-break`
-- `text-overflow`: `clip`, `ellipsis`
+- `text-overflow`: `clip`, `ellipsis`; `line-clamp` and `-webkit-line-clamp` (multi-line ellipsis)
 - `text-shadow`
-- `direction` (parsed, not applied to shaping or layout)
-- `vertical-align` (parsed, not applied)
+- `direction` (maps `start`/`end` alignment for RTL; bidi shaping follows the text content)
+- `vertical-align` (aligns the text block inside its box for `top`/`middle`/`bottom`; `sub`/`super` shift by 0.2em; not an inline formatting context)
 
 If a family exists but does not ship the exact weight/style (common for display fonts with only a Regular face), Widdgyy uses the closest face from that same family instead of silently switching to a different font family.
 
@@ -700,10 +701,11 @@ This is the complete list of known unsupported or partially supported behavior. 
 
 ### Text
 
-- `line-clamp` and multi-line ellipsis.
-- `text-align-last`, `vertical-align`, `direction`, `font-stretch`, `font-variant-caps` (parsed, no visual effect).
-- `text-indent` as a true line indent (only affects measured intrinsic width).
-- `font-feature-settings`, `font-variation-settings`, `text-rendering` (accepted, ignored).
+- `font-variation-settings` (accepted, ignored).
+- Synthetic small caps: `font-variant-caps` needs a font that ships the OpenType feature.
+- True inline formatting for `vertical-align` (the engine has no inline formatting context; only block alignment inside the text box is approximated).
+- `text-indent` changing the wrap width of the first line (the offset is applied, but wrapping still uses the full width).
+- Full bidi base-direction override for LTR text under `direction: rtl` (glyphs are shaped from the text's own bidi runs).
 - `hyphens`, `writing-mode`, `text-orientation`, `unicode-bidi`, `text-emphasis`, `initial-letter`.
 - Font synthesis: no artificial bold/italic faces; the closest real face is used.
 
@@ -772,6 +774,34 @@ The renderer is a browser-like painter, not a DOM engine attempt at full CSS con
 - A scene with spatial filters uses the full Vello layer path instead; `backdrop-filter` is ignored there.
 - Without a video wallpaper there is no backdrop to sample on a transparent layer surface, so `backdrop-filter` cannot work without compositor support.
 
+## Conformance harness
+
+The repository includes a Firefox-based layout harness:
+
+```bash
+./scripts/css-conformance.sh                 # all fixtures
+./scripts/css-conformance.sh text-basic      # one fixture
+```
+
+It starts Firefox headless with a temporary profile, speaks the Marionette protocol directly (no geckodriver or Python packages), reads `getBoundingClientRect()` and `Range.getClientRects()` for elements marked with `data-test`/`data-lines`, and compares them with `widdgyy --dump-layout`. If Firefox is unavailable the fixtures are skipped cleanly.
+
+Fixtures live in `tests/conformance/<name>/`:
+
+```
+config.py       widdgyy scene
+styles.css      widdgyy styles
+index.html      equivalent browser document
+fixture.json    optional {"width", "height", "tolerance"}
+```
+
+The command used for a fixture is:
+
+```bash
+widdgyy --dump-layout --config tests/conformance/text-basic/config.py --viewport 800x526
+```
+
+`--dump-layout` prints JSON with every node's border box, content box, id/classes/tag, generated pseudo-element marker and text line rectangles. Layout comparisons use a tolerance in pixels (default 2 px, configurable per fixture); text widths normally sit within 1–3 px because Firefox and cosmic-text may select slightly different faces or apply different kerning.
+
 ## Hot reload
 
 Widdgyy watches the config directory. Writing `config.py`, `config.jsonc` or `styles.css` triggers a debounced reload:
@@ -789,6 +819,7 @@ If the new config cannot be parsed, the previous scene is kept and the error is 
 ```bash
 RUST_LOG=widdgyy=debug ./target/release/widdgyy
 widdgyy --check-css
+widdgyy --dump-layout --viewport 1280x720
 ```
 
 `--check-css` prints the active config and stylesheet, counts stickers/rules/keyframes/fonts and lists:

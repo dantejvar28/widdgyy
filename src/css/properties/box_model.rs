@@ -11,7 +11,7 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str, _current: Color) 
         "display" => {
             decl.display = Some(match value.to_ascii_lowercase().as_str() {
                 "none" => Display::None,
-                "block" => Display::Block,
+                "block" | "-webkit-box" => Display::Block,
                 "inline" => Display::Inline,
                 "inline-block" => Display::InlineBlock,
                 "flex" | "inline-flex" => Display::Flex,

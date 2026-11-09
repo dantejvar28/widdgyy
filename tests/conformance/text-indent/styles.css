@@ -1,0 +1,7 @@
+.root { width: 500px; height: 200px; background: #ffffff; }
+.indent {
+  font-family: "DejaVu Sans";
+  font-size: 24px;
+  line-height: 30px;
+  text-indent: 40px;
+}

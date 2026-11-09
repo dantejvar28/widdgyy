@@ -91,6 +91,7 @@ pub struct TextStyle {
     pub style: FontStyle,
     pub stretch: f32,
     pub caps: FontVariantCaps,
+    pub features: Vec<(String, u32)>,
     pub line_height_px: f32,
     pub letter_spacing_px: f32,
     pub word_spacing_px: f32,
@@ -106,6 +107,7 @@ pub struct TextStyle {
     pub shadows: Vec<Shadow>,
     pub direction: Direction,
     pub vertical_align: VerticalAlign,
+    pub line_clamp: Option<usize>,
 }
 
 impl Default for TextStyle {
@@ -118,11 +120,12 @@ impl Default for TextStyle {
             style: FontStyle::Normal,
             stretch: 1.0,
             caps: FontVariantCaps::Normal,
+            features: Vec::new(),
             line_height_px: 19.2,
             letter_spacing_px: 0.0,
             word_spacing_px: 0.0,
             align: TextAlign::Left,
-            align_last: TextAlign::Left,
+            align_last: TextAlign::Auto,
             decoration: TextDecoration::default(),
             transform: TextTransform::None,
             indent: Length::Zero,
@@ -133,6 +136,7 @@ impl Default for TextStyle {
             shadows: Vec::new(),
             direction: Direction::Ltr,
             vertical_align: VerticalAlign::Baseline,
+            line_clamp: None,
         }
     }
 }
@@ -437,6 +441,9 @@ impl ComputedStyle {
         if let Some(caps) = declarations.font_variant_caps {
             style.text.caps = caps;
         }
+        if let Some(features) = &declarations.font_features {
+            style.text.features = features.clone();
+        }
         style.text.line_height_px = match &declarations.line_height {
             Some(LineHeight::Normal) | None => style.text.font_size_px * 1.2,
             Some(LineHeight::Number(number)) => style.text.font_size_px * number,
@@ -464,6 +471,9 @@ impl ComputedStyle {
         }
         if let Some(align) = declarations.text_align_last {
             style.text.align_last = align;
+        }
+        if let Some(lines) = declarations.line_clamp {
+            style.text.line_clamp = Some(lines);
         }
         if let Some(decoration) = &declarations.text_decoration {
             style.text.decoration = decoration.clone();

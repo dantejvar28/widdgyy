@@ -121,15 +121,26 @@ impl<'a> LayoutEngine<'a> {
                     families: &style.text.families,
                     weight: style.text.weight,
                     style: style.text.style,
+                    stretch: style.text.stretch,
+                    caps: style.text.caps,
+                    features: &style.text.features,
                     letter_spacing: style.text.letter_spacing_px,
                     word_spacing: style.text.word_spacing_px,
                     max_width,
                     align: style.text.align,
+                    align_last: style.text.align_last,
+                    direction: style.text.direction,
+                    indent: style
+                        .text
+                        .indent
+                        .resolve(&context, Axis::Horizontal)
+                        .max(0.0),
                     white_space: style.text.white_space,
                     overflow_wrap: style.text.overflow_wrap,
                     word_break: style.text.word_break,
                     transform: style.text.transform,
                     text_overflow: style.text.overflow,
+                    line_clamp: style.text.line_clamp,
                 };
                 let (text_width, text_height) = self.text.measure(request);
                 let width = explicit_width.unwrap_or_else(|| {

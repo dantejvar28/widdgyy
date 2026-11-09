@@ -1,0 +1,12 @@
+.root { width: 400px; height: 200px; background: #ffffff; }
+.clamp {
+  width: 160px;
+  font-family: "DejaVu Sans";
+  font-size: 16px;
+  line-height: 20px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}

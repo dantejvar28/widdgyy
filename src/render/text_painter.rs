@@ -28,7 +28,11 @@ pub fn paint_text(
 
     let content_x = node.layout.content_x;
     let content_y = node.layout.content_y;
-    let origin = *transform * Affine::translate((content_x as f64, content_y as f64));
+    let origin = *transform
+        * Affine::translate((
+            content_x as f64,
+            (content_y + vertical_shift(node, &shaped)) as f64,
+        ));
     let color = node.filter_color(node.text_color());
 
     if inline_shadows {
@@ -52,7 +56,10 @@ pub fn paint_text_mask(
         return;
     };
     let origin = *transform
-        * Affine::translate((node.layout.content_x as f64, node.layout.content_y as f64));
+        * Affine::translate((
+            node.layout.content_x as f64,
+            (node.layout.content_y + vertical_shift(node, &shaped)) as f64,
+        ));
     draw_shaped(
         canvas,
         &shaped,
@@ -157,17 +164,52 @@ fn shape(
         families: &node.style.text.families,
         weight: node.style.text.weight,
         style: node.style.text.style,
+        stretch: node.style.text.stretch,
+        caps: node.style.text.caps,
+        features: &node.style.text.features,
         letter_spacing: node.style.text.letter_spacing_px,
         word_spacing: node.style.text.word_spacing_px,
         max_width,
         align: node.style.text.align,
+        align_last: node.style.text.align_last,
+        direction: node.style.text.direction,
+        indent: node
+            .style
+            .text
+            .indent
+            .resolve(
+                &node.style.resolve_context(
+                    crate::css::Viewport::default(),
+                    node.layout.width,
+                    node.layout.height,
+                ),
+                Axis::Horizontal,
+            )
+            .max(0.0),
         white_space: node.style.text.white_space,
         overflow_wrap: node.style.text.overflow_wrap,
         word_break: node.style.text.word_break,
         transform: node.style.text.transform,
         text_overflow: node.style.text.overflow,
+        line_clamp: node.style.text.line_clamp,
     };
     Some(engine.shape(request))
+}
+
+/// Approximate CSS `vertical-align` for text boxes. The engine has no inline
+/// formatting context, so the whole text block is aligned inside its content
+/// box; `sub`/`super` shift the glyphs by 0.2em.
+fn vertical_shift(node: &Node, shaped: &crate::text::ShapedText) -> f32 {
+    use crate::css::properties::text::VerticalAlign;
+    match node.style.text.vertical_align {
+        VerticalAlign::Middle => ((node.layout.content_height - shaped.height) / 2.0).max(0.0),
+        VerticalAlign::Bottom | VerticalAlign::TextBottom => {
+            (node.layout.content_height - shaped.height).max(0.0)
+        }
+        VerticalAlign::Sub => node.style.text.font_size_px * 0.2,
+        VerticalAlign::Super => -node.style.text.font_size_px * 0.2,
+        VerticalAlign::Baseline | VerticalAlign::Top | VerticalAlign::TextTop => 0.0,
+    }
 }
 
 fn draw_shaped(
@@ -221,6 +263,8 @@ fn paint_decoration(
             _ => line.baseline,
         };
         let width = line.width;
+        let line_x = line.x as f64;
+        let line_end = line_x + width as f64;
         if decoration.underline {
             let y = y + node.style.text.font_size_px * 0.12;
             canvas.stroke(
@@ -228,7 +272,7 @@ fn paint_decoration(
                 *origin,
                 color,
                 None,
-                &Line::new((0.0, y as f64), (width as f64, y as f64)),
+                &Line::new((line_x, y as f64), (line_end, y as f64)),
             );
         }
         if decoration.overline {
@@ -238,7 +282,7 @@ fn paint_decoration(
                 *origin,
                 color,
                 None,
-                &Line::new((0.0, y as f64), (width as f64, y as f64)),
+                &Line::new((line_x, y as f64), (line_end, y as f64)),
             );
         }
         if decoration.line_through {
@@ -248,8 +292,37 @@ fn paint_decoration(
                 *origin,
                 color,
                 None,
-                &Line::new((0.0, y as f64), (width as f64, y as f64)),
+                &Line::new((line_x, y as f64), (line_end, y as f64)),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod vertical_align_tests {
+    use super::vertical_shift;
+    use crate::css::properties::text::VerticalAlign;
+    use crate::scene::Node;
+    use crate::text::ShapedText;
+
+    #[test]
+    fn aligns_the_text_block_inside_its_box() {
+        let mut node = Node::text("text", Vec::new(), "x");
+        node.layout.content_height = 100.0;
+        let shaped = ShapedText {
+            height: 40.0,
+            ..ShapedText::default()
+        };
+
+        node.style.text.vertical_align = VerticalAlign::Middle;
+        assert!((vertical_shift(&node, &shaped) - 30.0).abs() < 1e-6);
+        node.style.text.vertical_align = VerticalAlign::Bottom;
+        assert!((vertical_shift(&node, &shaped) - 60.0).abs() < 1e-6);
+        node.style.text.vertical_align = VerticalAlign::Baseline;
+        assert!((vertical_shift(&node, &shaped)).abs() < 1e-6);
+        node.style.text.vertical_align = VerticalAlign::Sub;
+        assert!(vertical_shift(&node, &shaped) > 0.0);
+        node.style.text.vertical_align = VerticalAlign::Super;
+        assert!(vertical_shift(&node, &shaped) < 0.0);
     }
 }

@@ -18,6 +18,7 @@ pub mod animation;
 pub mod api;
 pub mod app;
 pub mod config;
+pub mod conformance;
 pub mod css;
 pub mod diagnostics;
 pub mod layout;
