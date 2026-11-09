@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 
+use super::filter::Scissor;
 use crate::media::VideoFrameData;
 use wgpu::{
     BindGroup, BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BindingType,
@@ -48,6 +49,21 @@ pub struct VideoFrame {
     pub y: f32,
     pub width: f32,
     pub height: f32,
+}
+
+fn intersect_scissor(a: Scissor, b: Scissor) -> Option<Scissor> {
+    let x0 = a.x.max(b.x);
+    let y0 = a.y.max(b.y);
+    let x1 = a.x.saturating_add(a.width).min(b.x.saturating_add(b.width));
+    let y1 =
+        a.y.saturating_add(a.height)
+            .min(b.y.saturating_add(b.height));
+    (x1 > x0 && y1 > y0).then_some(Scissor {
+        x: x0,
+        y: y0,
+        width: x1 - x0,
+        height: y1 - y0,
+    })
 }
 
 pub struct Compositor {
@@ -352,6 +368,7 @@ impl Compositor {
         target: &TextureView,
         video: &VideoFrame,
         scale: f32,
+        region: Option<Scissor>,
     ) {
         let Some(bind_group) = &self.video_bind_group else {
             return;
@@ -383,11 +400,23 @@ impl Compositor {
             let draw_width = (video.width * scale).min(width - x).max(0.0);
             let draw_height = (video.height * scale).min(height - y).max(0.0);
             if draw_width > 0.0 && draw_height > 0.0 {
-                pass.set_pipeline(&self.video_pipeline);
-                pass.set_bind_group(0, bind_group, &[]);
-                pass.set_viewport(x, y, draw_width, draw_height, 0.0, 1.0);
-                pass.set_scissor_rect(x as u32, y as u32, draw_width as u32, draw_height as u32);
-                pass.draw(0..3, 0..1);
+                let video_scissor = Scissor {
+                    x: x as u32,
+                    y: y as u32,
+                    width: (draw_width.ceil() as u32).max(1),
+                    height: (draw_height.ceil() as u32).max(1),
+                };
+                let scissor = match region {
+                    Some(region) => intersect_scissor(video_scissor, region),
+                    None => Some(video_scissor),
+                };
+                if let Some(scissor) = scissor {
+                    pass.set_pipeline(&self.video_pipeline);
+                    pass.set_bind_group(0, bind_group, &[]);
+                    pass.set_viewport(x, y, draw_width, draw_height, 0.0, 1.0);
+                    pass.set_scissor_rect(scissor.x, scissor.y, scissor.width, scissor.height);
+                    pass.draw(0..3, 0..1);
+                }
             }
         }
         queue.submit(Some(encoder.finish()));

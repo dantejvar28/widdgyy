@@ -415,6 +415,7 @@ impl GpuRenderer {
                 &self.backdrop_source_view,
                 video,
                 crate::app::BACKDROP_MASK_SCALE as f32,
+                scissor,
             );
             let mut encoder = self
                 .device

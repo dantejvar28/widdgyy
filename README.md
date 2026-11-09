@@ -194,7 +194,7 @@ The render loop is event-driven:
 - Text is shaped once per content/style pair and cached (bounded to 512 entries). Painting reuses the shaped glyph runs.
 - Text-shadow blur slots are cached and the animated sigma is quantized, so a moving glow only re-blurs when the radius crosses a step instead of every frame.
 - The backdrop filter renders the video at 35% resolution with two separable blur iterations, scissored to the panel union; overlay and shadow blurs keep four.
-- Shadow and backdrop blur passes are scissored to their content region instead of the full screen, and the shadow blur slots are cached.
+- Shadow and backdrop blur passes are scissored to their content region instead of the full screen, the backdrop video downsample is scissored to the same region, and the shadow blur slots are cached.
 - `./scripts/perf-sample.sh 10` samples CPU, RSS and total GPU utilization of a running instance for before/after comparisons (GPU readings include the desktop and are noisy).
 - Styles are resolved and layout runs only on load, reload and resize, not per frame.
 - Images are decoded once and shared with `Arc`; the image cache is bounded to 64 entries and pruned on reload.
