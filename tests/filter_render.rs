@@ -6,7 +6,7 @@
 //! Like `offscreen_render.rs`, this skips instead of failing when no GPU
 //! adapter is available.
 
-use widdgyy::render::filter::{FilterCompositor, LayerSpec, SpatialFilter};
+use widdgyy::render::filter::{FilterCompositor, LayerSpec, Scissor, SpatialFilter};
 
 const WIDTH: u32 = 64;
 const HEIGHT: u32 = 64;
@@ -287,6 +287,90 @@ fn composites_premultiplied_group_through_a_filter() {
     assert!(
         red > alpha * 0.9,
         "premultiplied group was premultiplied twice: red={red} alpha={alpha}"
+    );
+}
+
+#[test]
+fn shadow_slots_use_full_resolution_output_scissor() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter available; skipping shadow scissor assertion");
+        return;
+    };
+    let mut renderer = vello::Renderer::new(
+        &device,
+        vello::RendererOptions {
+            use_cpu: false,
+            antialiasing_support: vello::AaSupport::area_only(),
+            num_init_threads: None,
+            pipeline_cache: None,
+        },
+    )
+    .expect("creating Vello renderer");
+
+    let mut scene = vello::Scene::new();
+    scene.fill(
+        vello::peniko::Fill::NonZero,
+        vello::kurbo::Affine::IDENTITY,
+        vello::peniko::Color::new([1.0, 1.0, 1.0, 1.0]),
+        None,
+        &vello::kurbo::Rect::new(4.0, 4.0, 28.0, 28.0),
+    );
+
+    let mut filters = FilterCompositor::new(&device, wgpu::TextureFormat::Rgba8Unorm, 32, 32);
+    let target = test_texture(
+        &device,
+        "full-res shadow slot",
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+    );
+    let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
+    renderer
+        .render_to_texture(
+            &device,
+            &queue,
+            &scene,
+            filters.layer_view(),
+            &vello::RenderParams {
+                base_color: vello::peniko::Color::new([0.0, 0.0, 0.0, 0.0]),
+                width: 32,
+                height: 32,
+                antialiasing_method: vello::AaConfig::Area,
+            },
+        )
+        .expect("rendering shadow mask");
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    filters.encode_layer_scissored(
+        &queue,
+        &mut encoder,
+        &target_view,
+        Some(SpatialFilter::Blur { radius: 1.5 }),
+        true,
+        Some(Scissor {
+            x: 2,
+            y: 2,
+            width: 20,
+            height: 20,
+        }),
+        Some(Scissor {
+            x: 4,
+            y: 4,
+            width: 44,
+            height: 44,
+        }),
+    );
+    queue.submit(Some(encoder.finish()));
+
+    let pixels = read_back(&device, &queue, &target);
+    let inside = (40 * WIDTH as usize + 40) * 4;
+    let outside = (50 * WIDTH as usize + 50) * 4;
+    assert!(
+        pixels[inside + 3] > 0,
+        "output scissor must be in full-resolution slot coordinates"
+    );
+    assert_eq!(
+        pixels[outside + 3],
+        0,
+        "output scissor must still clip outside the region"
     );
 }
 

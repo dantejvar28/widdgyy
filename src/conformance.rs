@@ -80,6 +80,7 @@ fn collect(
             "height": node.layout.content_height,
         },
         "lines": lines,
+        "text_shadows": node.text_shadows().len(),
     }));
     if matches!(node.kind, NodeKind::Container) {
         for child in &node.children {

@@ -419,6 +419,7 @@ impl FilterCompositor {
     }
 
     /// Like [`Self::encode_layer`] but restricts fragment work to a scissor.
+    #[allow(clippy::too_many_arguments)]
     pub fn encode_layer_scissored(
         &mut self,
         queue: &Queue,
@@ -427,9 +428,10 @@ impl FilterCompositor {
         filter: Option<SpatialFilter>,
         clear: bool,
         scissor: Option<Scissor>,
+        output_scissor: Option<Scissor>,
     ) {
         let source = self.layer_view.clone();
-        self.encode_composite(
+        self.encode_composite_inner(
             queue,
             encoder,
             target,
@@ -442,6 +444,7 @@ impl FilterCompositor {
                 scissor,
             },
             clear,
+            output_scissor,
         );
     }
 
@@ -458,6 +461,18 @@ impl FilterCompositor {
         spec: LayerSpec<'_>,
         clear: bool,
     ) {
+        self.encode_composite_inner(queue, encoder, target, spec, clear, None);
+    }
+
+    fn encode_composite_inner(
+        &mut self,
+        queue: &Queue,
+        encoder: &mut CommandEncoder,
+        target: &TextureView,
+        spec: LayerSpec<'_>,
+        clear: bool,
+        output_scissor: Option<Scissor>,
+    ) {
         let LayerSpec {
             source,
             filter,
@@ -467,6 +482,7 @@ impl FilterCompositor {
             scissor,
         } = spec;
         let scissor = scissor.and_then(|scissor| scissor.clamped(self.width, self.height));
+        let composite_scissor = output_scissor.or(scissor);
 
         let Some(filter) = filter else {
             self.composite(
@@ -482,7 +498,7 @@ impl FilterCompositor {
                 (0.0, 0.0),
                 [0.0; 4],
                 clear,
-                scissor,
+                composite_scissor,
             );
             return;
         };
@@ -559,7 +575,7 @@ impl FilterCompositor {
             offset,
             color,
             clear,
-            scissor,
+            composite_scissor,
         );
     }
 

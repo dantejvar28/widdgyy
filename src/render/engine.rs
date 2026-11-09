@@ -315,10 +315,19 @@ impl GpuRenderer {
         let scissor = region.and_then(|region| {
             scaled_scissor(region, crate::app::SHADOW_MASK_SCALE, width, height)
         });
+        // Shadow slots are full resolution even though the blur mask is half
+        // resolution, so the final composite needs a separately scaled scissor.
+        let output_scissor =
+            region.and_then(|region| scaled_scissor(region, 1.0, self.width, self.height));
         if self.shadow_scissor != scissor {
             self.shadow_sigmas.fill(None);
             self.shadow_scissor = scissor;
         }
+        eprintln!(
+            "DEBUG render_shadows count={} scissor={:?}",
+            shadows.len(),
+            scissor
+        );
         let mut sigmas: Vec<f32> = Vec::new();
         let mut items = Vec::with_capacity(shadows.len().min(MAX_SHADOW_ITEMS));
         for shadow in shadows.iter().take(MAX_SHADOW_ITEMS) {
@@ -362,6 +371,7 @@ impl GpuRenderer {
                 filter,
                 true,
                 scissor,
+                output_scissor,
             );
             self.queue.submit(Some(encoder.finish()));
             self.shadow_sigmas[slot] = Some(*sigma);
