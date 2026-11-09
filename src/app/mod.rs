@@ -43,7 +43,7 @@ pub const SHADOW_MASK_SCALE: f64 = 0.5;
 
 /// Backdrop masks and blurred video run at half resolution. Glass is soft, so
 /// the upscale is invisible and the blur cost drops to a quarter.
-pub const BACKDROP_MASK_SCALE: f64 = 0.5;
+pub const BACKDROP_MASK_SCALE: f64 = 0.35;
 
 /// Fill a scene with a full-viewport transparent rect. Vello processes every
 /// tile when a shape covers it, which overwrites stale pixels from the last

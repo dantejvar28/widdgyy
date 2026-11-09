@@ -172,6 +172,8 @@ pub struct FilterCompositor {
     premultiply_pipeline: RenderPipeline,
     blur_pipeline: RenderPipeline,
     composite_pipeline: RenderPipeline,
+    /// Number of separable blur iterations used by this compositor.
+    blur_passes: u32,
     /// Scratch target for the most recent Vello scene. Nested groups
     /// rasterize their scenes here before compositing them into their
     /// accumulation texture.
@@ -187,6 +189,16 @@ pub struct FilterCompositor {
 
 impl FilterCompositor {
     pub fn new(device: &Device, format: TextureFormat, width: u32, height: u32) -> Self {
+        Self::new_with_passes(device, format, width, height, BLUR_PASSES)
+    }
+
+    pub fn new_with_passes(
+        device: &Device,
+        format: TextureFormat,
+        width: u32,
+        height: u32,
+        blur_passes: u32,
+    ) -> Self {
         let shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("widdgyy filter shader"),
             source: ShaderSource::Wgsl(include_str!("filter.wgsl").into()),
@@ -306,6 +318,7 @@ impl FilterCompositor {
             premultiply_pipeline,
             blur_pipeline,
             composite_pipeline,
+            blur_passes: blur_passes.max(1),
             layer_view,
             blur_a_view,
             blur_b_view,
@@ -428,7 +441,7 @@ impl FilterCompositor {
         // Repeating the separable pass N times with spacing sigma / (3·√N)
         // gives the requested total sigma. Many small steps keep the taps
         // dense enough that the discrete sampling lattice does not show.
-        let iterations = BLUR_PASSES;
+        let iterations = self.blur_passes;
         let step = sigma / (3.0 * (iterations as f32).sqrt());
         let step_x = step / self.width as f32;
         let step_y = step / self.height as f32;

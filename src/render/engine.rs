@@ -31,6 +31,9 @@ pub struct GpuRenderer {
     compositor: Compositor,
     filter: FilterCompositor,
     shadow_filter: FilterCompositor,
+    /// Quantized sigma currently stored in each shadow blur slot. The mask is
+    /// re-blurred only when a slot's value changes.
+    shadow_sigmas: Vec<Option<f32>>,
     backdrop_filter: FilterCompositor,
     backdrop_source: Texture,
     backdrop_source_view: TextureView,
@@ -134,11 +137,12 @@ impl GpuRenderer {
             shadow_height,
         );
         let (backdrop_width, backdrop_height) = backdrop_extent(width, height);
-        let backdrop_filter = FilterCompositor::new(
+        let backdrop_filter = FilterCompositor::new_with_passes(
             &device,
             TextureFormat::Rgba8Unorm,
             backdrop_width,
             backdrop_height,
+            2,
         );
         let (backdrop_source, backdrop_source_view) = create_backdrop_texture(
             &device,
@@ -175,6 +179,7 @@ impl GpuRenderer {
             compositor,
             filter,
             shadow_filter,
+            shadow_sigmas: vec![None; MAX_SHADOW_SLOTS],
             backdrop_filter,
             backdrop_source,
             backdrop_source_view,
@@ -211,6 +216,7 @@ impl GpuRenderer {
         let (shadow_width, shadow_height) = shadow_extent(width, height);
         self.shadow_filter
             .resize(&self.device, shadow_width, shadow_height);
+        self.shadow_sigmas.fill(None);
         let (backdrop_width, backdrop_height) = backdrop_extent(width, height);
         self.backdrop_filter
             .resize(&self.device, backdrop_width, backdrop_height);
@@ -275,6 +281,7 @@ impl GpuRenderer {
     /// in the filter layer until the text changes; blur, offset and colour are
     /// applied per frame by `render_shadows` without touching Vello again.
     pub fn render_shadow_mask(&mut self, scene: &Scene) -> Result<()> {
+        self.shadow_sigmas.fill(None);
         let (width, height) = shadow_extent(self.width, self.height);
         let params = RenderParams {
             base_color: Color::new([0.0, 0.0, 0.0, 0.0]),
@@ -299,16 +306,17 @@ impl GpuRenderer {
         let mut sigmas: Vec<f32> = Vec::new();
         let mut items = Vec::with_capacity(shadows.len().min(MAX_SHADOW_ITEMS));
         for shadow in shadows.iter().take(MAX_SHADOW_ITEMS) {
+            let sigma = quantize_shadow_sigma(shadow.sigma);
             let slot = match sigmas
                 .iter()
-                .position(|sigma| (sigma - shadow.sigma).abs() < 0.05)
+                .position(|current| (current - sigma).abs() < 1e-4)
             {
                 Some(slot) => slot,
                 None if sigmas.len() < MAX_SHADOW_SLOTS => {
-                    sigmas.push(shadow.sigma);
+                    sigmas.push(sigma);
                     sigmas.len() - 1
                 }
-                None => nearest_slot(&sigmas, shadow.sigma),
+                None => nearest_slot(&sigmas, sigma),
             };
             items.push(ShadowItem {
                 slot,
@@ -318,6 +326,9 @@ impl GpuRenderer {
         }
 
         for (slot, sigma) in sigmas.iter().enumerate() {
+            if self.shadow_sigmas.get(slot).copied().flatten() == Some(*sigma) {
+                continue;
+            }
             // Hard shadows skip the blur; the others run at mask resolution,
             // so their sigma is halved to match.
             let filter = (*sigma >= HARD_SHADOW_SIGMA).then(|| SpatialFilter::Blur {
@@ -336,6 +347,7 @@ impl GpuRenderer {
                 true,
             );
             self.queue.submit(Some(encoder.finish()));
+            self.shadow_sigmas[slot] = Some(*sigma);
         }
         self.compositor.set_shadows(&self.queue, &items);
         Ok(())
@@ -806,6 +818,12 @@ fn create_backdrop_texture(
     (texture, view)
 }
 
+/// Quantize shadow sigmas so small animation steps reuse the cached blur.
+fn quantize_shadow_sigma(sigma: f32) -> f32 {
+    let step = 0.5;
+    ((sigma.max(0.0) / step).round() * step).max(0.0)
+}
+
 fn nearest_slot(sigmas: &[f32], sigma: f32) -> usize {
     sigmas
         .iter()
@@ -813,4 +831,17 @@ fn nearest_slot(sigmas: &[f32], sigma: f32) -> usize {
         .min_by(|(_, a), (_, b)| (*a - sigma).abs().total_cmp(&(*b - sigma).abs()))
         .map(|(index, _)| index)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod shadow_cache_tests {
+    use super::quantize_shadow_sigma;
+
+    #[test]
+    fn quantizes_shadow_sigmas_to_half_pixels() {
+        assert!((quantize_shadow_sigma(4.1) - 4.0).abs() < 1e-6);
+        assert!((quantize_shadow_sigma(4.26) - 4.5).abs() < 1e-6);
+        assert!((quantize_shadow_sigma(0.2) - 0.0).abs() < 1e-6);
+        assert!((quantize_shadow_sigma(-1.0) - 0.0).abs() < 1e-6);
+    }
 }
