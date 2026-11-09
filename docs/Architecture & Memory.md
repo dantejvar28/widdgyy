@@ -20,6 +20,7 @@ styles.css ───► Stylesheet ──► Cascade ──► ComputedStyle (ty
 ```
 
 - `config.py` is evaluated by the system `python3` in a subprocess with a 3 s timeout; its JSON output goes through the same loader as `config.jsonc`. A broken Python config keeps the previous scene.
+- Media queries are evaluated against `css::Preferences`. They are detected once on load/reload from environment overrides, GNOME `gsettings`, KDE `kreadconfig`, or `GTK_THEME`; the wallpaper defaults to light, no reduced motion, no input and fullscreen display mode.
 - Styles are parsed once. The cascade runs on load, hot reload and resize only.
 - Layout runs on load, hot reload, resize and when text content changes (clock/API).
 - Painting runs only when the scene is dirty: a clock second, a GIF/video frame, an API result, a resize or a reload.
@@ -132,3 +133,4 @@ The video path uses NVDEC/NV12, avoids the per-frame CPU RGBA conversion, and co
 - `@import` is rejected with a log message; `@layer` blocks are flattened without ordering.
 - External SVG clip paths and `clip-path: url(...)` are not fetched.
 - The CSS support matrix (including parsed-only properties) is maintained in the Configuration & Styling Guide.
+- Media preference changes are picked up on reload; there is no live desktop-theme subscription. Output scale factor is still fixed at 1.0, so `resolution` reports 1dppx.

@@ -572,7 +572,15 @@ impl Scene {
     }
 
     pub fn resolve_styles(&mut self, stylesheet: &crate::css::Stylesheet) {
-        let cascade = Cascade::new(stylesheet, self.viewport);
+        self.resolve_styles_with_preferences(stylesheet, crate::css::Preferences::default());
+    }
+
+    pub fn resolve_styles_with_preferences(
+        &mut self,
+        stylesheet: &crate::css::Stylesheet,
+        preferences: crate::css::Preferences,
+    ) {
+        let cascade = Cascade::with_preferences(stylesheet, self.viewport, preferences);
         let total = self.roots.len();
         for (index, root) in self.roots.iter_mut().enumerate() {
             let mut ancestors = Vec::new();

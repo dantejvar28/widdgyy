@@ -10,6 +10,7 @@ use vello::peniko::Color;
 use super::Viewport;
 use super::computed::ComputedStyle;
 use super::parser::{self, RawDeclaration};
+use super::preferences::{ColorScheme, DisplayMode, Hover, Pointer, Preferences};
 use super::properties::Declarations;
 use super::properties::transition::{self, Keyframes};
 use super::selector::{Element, PseudoElement, Selector, Specificity, parse_selector_list};
@@ -23,15 +24,54 @@ pub struct FontFace {
     pub style: String,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MediaCondition {
     pub min_width: Option<f32>,
     pub max_width: Option<f32>,
     pub min_height: Option<f32>,
     pub max_height: Option<f32>,
     pub orientation: Option<Orientation>,
-    pub prefers_dark: Option<bool>,
+    pub prefers_color_scheme: Option<ColorScheme>,
+    /// `true` means `reduce`, `false` means `no-preference`.
     pub prefers_reduced_motion: Option<bool>,
+    pub min_resolution: Option<f32>,
+    pub max_resolution: Option<f32>,
+    pub min_aspect_ratio: Option<f32>,
+    pub max_aspect_ratio: Option<f32>,
+    pub hover: Option<Hover>,
+    pub pointer: Option<Pointer>,
+    pub any_hover: Option<Hover>,
+    pub any_pointer: Option<Pointer>,
+    pub display_mode: Option<DisplayMode>,
+    pub media_type_matches: bool,
+    pub negate: bool,
+    pub unknown: bool,
+}
+
+impl Default for MediaCondition {
+    fn default() -> Self {
+        Self {
+            min_width: None,
+            max_width: None,
+            min_height: None,
+            max_height: None,
+            orientation: None,
+            prefers_color_scheme: None,
+            prefers_reduced_motion: None,
+            min_resolution: None,
+            max_resolution: None,
+            min_aspect_ratio: None,
+            max_aspect_ratio: None,
+            hover: None,
+            pointer: None,
+            any_hover: None,
+            any_pointer: None,
+            display_mode: None,
+            media_type_matches: true,
+            negate: false,
+            unknown: false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,50 +81,72 @@ pub enum Orientation {
 }
 
 impl MediaCondition {
-    pub fn matches(&self, viewport: Viewport) -> bool {
-        if let Some(value) = self.min_width
-            && viewport.width < value
-        {
-            return false;
+    pub fn matches(&self, viewport: Viewport, preferences: Preferences) -> bool {
+        let mut result = self.media_type_matches && !self.unknown;
+
+        if result && self.min_width.is_some_and(|value| viewport.width < value) {
+            result = false;
         }
-        if let Some(value) = self.max_width
-            && viewport.width > value
-        {
-            return false;
+        if result && self.max_width.is_some_and(|value| viewport.width > value) {
+            result = false;
         }
-        if let Some(value) = self.min_height
-            && viewport.height < value
-        {
-            return false;
+        if result && self.min_height.is_some_and(|value| viewport.height < value) {
+            result = false;
         }
-        if let Some(value) = self.max_height
-            && viewport.height > value
-        {
-            return false;
+        if result && self.max_height.is_some_and(|value| viewport.height > value) {
+            result = false;
         }
-        if let Some(orientation) = self.orientation {
+        if result && let Some(orientation) = self.orientation {
             let current = if viewport.width >= viewport.height {
                 Orientation::Landscape
             } else {
                 Orientation::Portrait
             };
-            if current != orientation {
-                return false;
+            result = current == orientation;
+        }
+        if result && let Some(scheme) = self.prefers_color_scheme {
+            result = scheme == preferences.color_scheme;
+        }
+        if result && let Some(reduced) = self.prefers_reduced_motion {
+            result = reduced == preferences.reduced_motion;
+        }
+        if result {
+            let resolution = viewport.scale_factor.max(0.01);
+            if self.min_resolution.is_some_and(|value| resolution < value)
+                || self.max_resolution.is_some_and(|value| resolution > value)
+            {
+                result = false;
             }
         }
-        // The engine always renders the default light palette; media queries
-        // are still parsed so stylesheets remain portable.
-        if let Some(dark) = self.prefers_dark
-            && dark
-        {
-            return false;
+        if result {
+            let ratio = if viewport.height > 0.0 {
+                viewport.width / viewport.height
+            } else {
+                0.0
+            };
+            if self.min_aspect_ratio.is_some_and(|value| ratio < value)
+                || self.max_aspect_ratio.is_some_and(|value| ratio > value)
+            {
+                result = false;
+            }
         }
-        if let Some(reduced) = self.prefers_reduced_motion
-            && !reduced
-        {
-            return false;
+        if result && let Some(hover) = self.hover {
+            result = hover == preferences.hover;
         }
-        true
+        if result && let Some(pointer) = self.pointer {
+            result = pointer == preferences.pointer;
+        }
+        if result && let Some(hover) = self.any_hover {
+            result = hover == preferences.any_hover;
+        }
+        if result && let Some(pointer) = self.any_pointer {
+            result = pointer == preferences.any_pointer;
+        }
+        if result && let Some(mode) = self.display_mode {
+            result = mode == preferences.display_mode;
+        }
+
+        if self.negate { !result } else { result }
     }
 }
 
@@ -99,15 +161,27 @@ impl MediaQuery {
         let mut conditions = Vec::new();
         for part in input.split(',') {
             let mut condition = MediaCondition::default();
-            let text = part
-                .trim()
-                .trim_start_matches("only ")
-                .trim_start_matches("screen and ")
-                .trim_start_matches("all and ")
-                .trim();
+            let mut text = part.trim();
+            if let Some(rest) = text.strip_prefix("not ") {
+                condition.negate = true;
+                text = rest.trim();
+            }
+            text = text.strip_prefix("only ").unwrap_or(text).trim();
+
+            let type_end = text
+                .find(|ch: char| ch == '(' || ch.is_whitespace())
+                .unwrap_or(text.len());
+            let media_type = text[..type_end].trim().to_ascii_lowercase();
+            if !media_type.is_empty() {
+                condition.media_type_matches = matches!(media_type.as_str(), "screen" | "all");
+                let rest = text[type_end..].trim_start();
+                text = rest.strip_prefix("and ").unwrap_or(rest).trim();
+            }
+
             let mut remaining = text.to_string();
             while let Some(open) = remaining.find('(') {
                 let Some(close) = remaining[open..].find(')').map(|value| value + open) else {
+                    condition.unknown = true;
                     break;
                 };
                 let feature = remaining[open + 1..close].trim().to_ascii_lowercase();
@@ -117,22 +191,99 @@ impl MediaQuery {
                     .map(|(name, value)| (name.trim(), value.trim()))
                     .unwrap_or((feature.as_str(), ""));
                 match name {
-                    "min-width" => condition.min_width = parse_px(value),
-                    "max-width" => condition.max_width = parse_px(value),
-                    "min-height" => condition.min_height = parse_px(value),
-                    "max-height" => condition.max_height = parse_px(value),
+                    "min-width" => match parse_px(value) {
+                        Some(parsed) => condition.min_width = Some(parsed),
+                        None => condition.unknown = true,
+                    },
+                    "max-width" => match parse_px(value) {
+                        Some(parsed) => condition.max_width = Some(parsed),
+                        None => condition.unknown = true,
+                    },
+                    "min-height" => match parse_px(value) {
+                        Some(parsed) => condition.min_height = Some(parsed),
+                        None => condition.unknown = true,
+                    },
+                    "max-height" => match parse_px(value) {
+                        Some(parsed) => condition.max_height = Some(parsed),
+                        None => condition.unknown = true,
+                    },
                     "orientation" => {
                         condition.orientation = Some(if value == "portrait" {
                             Orientation::Portrait
+                        } else if value == "landscape" {
+                            Orientation::Landscape
                         } else {
+                            condition.unknown = true;
                             Orientation::Landscape
                         })
                     }
-                    "prefers-color-scheme" => condition.prefers_dark = Some(value == "dark"),
-                    "prefers-reduced-motion" => {
-                        condition.prefers_reduced_motion = Some(value != "reduce")
+                    "prefers-color-scheme" => {
+                        condition.prefers_color_scheme = ColorScheme::parse(value);
+                        if condition.prefers_color_scheme.is_none() {
+                            condition.unknown = true;
+                        }
                     }
-                    _ => {}
+                    "prefers-reduced-motion" => {
+                        condition.prefers_reduced_motion = match value {
+                            "reduce" => Some(true),
+                            "no-preference" => Some(false),
+                            _ => {
+                                condition.unknown = true;
+                                None
+                            }
+                        }
+                    }
+                    "min-resolution" => match parse_resolution(value) {
+                        Some(parsed) => condition.min_resolution = Some(parsed),
+                        None => condition.unknown = true,
+                    },
+                    "max-resolution" => match parse_resolution(value) {
+                        Some(parsed) => condition.max_resolution = Some(parsed),
+                        None => condition.unknown = true,
+                    },
+                    "resolution" => match parse_resolution(value) {
+                        Some(parsed) => {
+                            condition.min_resolution = Some(parsed);
+                            condition.max_resolution = Some(parsed);
+                        }
+                        None => condition.unknown = true,
+                    },
+                    "min-aspect-ratio" => match parse_ratio(value) {
+                        Some(parsed) => condition.min_aspect_ratio = Some(parsed),
+                        None => condition.unknown = true,
+                    },
+                    "max-aspect-ratio" => match parse_ratio(value) {
+                        Some(parsed) => condition.max_aspect_ratio = Some(parsed),
+                        None => condition.unknown = true,
+                    },
+                    "aspect-ratio" => match parse_ratio(value) {
+                        Some(parsed) => {
+                            condition.min_aspect_ratio = Some(parsed);
+                            condition.max_aspect_ratio = Some(parsed);
+                        }
+                        None => condition.unknown = true,
+                    },
+                    "hover" => match Hover::parse(value) {
+                        Some(parsed) => condition.hover = Some(parsed),
+                        None => condition.unknown = true,
+                    },
+                    "pointer" => match Pointer::parse(value) {
+                        Some(parsed) => condition.pointer = Some(parsed),
+                        None => condition.unknown = true,
+                    },
+                    "any-hover" => match Hover::parse(value) {
+                        Some(parsed) => condition.any_hover = Some(parsed),
+                        None => condition.unknown = true,
+                    },
+                    "any-pointer" => match Pointer::parse(value) {
+                        Some(parsed) => condition.any_pointer = Some(parsed),
+                        None => condition.unknown = true,
+                    },
+                    "display-mode" => match DisplayMode::parse(value) {
+                        Some(parsed) => condition.display_mode = Some(parsed),
+                        None => condition.unknown = true,
+                    },
+                    _ => condition.unknown = true,
                 }
             }
             conditions.push(condition);
@@ -143,10 +294,10 @@ impl MediaQuery {
         Self { conditions }
     }
 
-    pub fn matches(&self, viewport: Viewport) -> bool {
+    pub fn matches(&self, viewport: Viewport, preferences: Preferences) -> bool {
         self.conditions
             .iter()
-            .any(|condition| condition.matches(viewport))
+            .any(|condition| condition.matches(viewport, preferences))
     }
 }
 
@@ -162,6 +313,38 @@ fn parse_px(value: &str) -> Option<f32> {
         };
         length.resolve(&context, crate::css::Axis::Horizontal)
     })
+}
+
+fn parse_resolution(value: &str) -> Option<f32> {
+    let value = value.trim().to_ascii_lowercase();
+    if let Some(number) = value
+        .strip_suffix("dppx")
+        .or_else(|| value.strip_suffix('x'))
+    {
+        return number.trim().parse().ok();
+    }
+    if let Some(number) = value.strip_suffix("dpi") {
+        return number.trim().parse::<f32>().ok().map(|value| value / 96.0);
+    }
+    if let Some(number) = value.strip_suffix("dpcm") {
+        return number
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .map(|value| value * 2.54 / 96.0);
+    }
+    None
+}
+
+fn parse_ratio(value: &str) -> Option<f32> {
+    let value = value.trim();
+    if let Some((width, height)) = value.split_once('/') {
+        let width = width.trim().parse::<f32>().ok()?;
+        let height = height.trim().parse::<f32>().ok()?;
+        (height > 0.0).then_some(width / height)
+    } else {
+        value.parse().ok()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -323,12 +506,13 @@ impl Stylesheet {
         element: &Element<'_>,
         ancestors: &[Element<'_>],
         viewport: Viewport,
+        preferences: Preferences,
         pseudo: Option<PseudoElement>,
     ) -> Vec<(&'a StyleRule, Specificity)> {
         let mut matched = Vec::new();
         for rule in &self.rules {
             if let Some(media) = &rule.media
-                && !media.matches(viewport)
+                && !media.matches(viewport, preferences)
             {
                 continue;
             }
@@ -356,13 +540,29 @@ impl Stylesheet {
 pub struct Cascade<'a> {
     pub stylesheet: &'a Stylesheet,
     pub viewport: Viewport,
+    pub preferences: Preferences,
 }
 
 impl<'a> Cascade<'a> {
+    /// Browser-like defaults: light, no reduced motion, no input. Used by
+    /// tests and tools that do not probe the desktop.
     pub fn new(stylesheet: &'a Stylesheet, viewport: Viewport) -> Self {
         Self {
             stylesheet,
             viewport,
+            preferences: Preferences::default(),
+        }
+    }
+
+    pub fn with_preferences(
+        stylesheet: &'a Stylesheet,
+        viewport: Viewport,
+        preferences: Preferences,
+    ) -> Self {
+        Self {
+            stylesheet,
+            viewport,
+            preferences,
         }
     }
 
@@ -402,7 +602,7 @@ impl<'a> Cascade<'a> {
     ) -> ComputedStyle {
         let mut matched: Vec<Matched<'_>> = self
             .stylesheet
-            .rules_for(element, ancestors, self.viewport, pseudo)
+            .rules_for(element, ancestors, self.viewport, self.preferences, pseudo)
             .into_iter()
             .flat_map(|(rule, specificity)| {
                 rule.declarations.iter().map(move |declaration| Matched {
@@ -649,16 +849,125 @@ mod tests {
     #[test]
     fn parses_media_query() {
         let query = MediaQuery::parse("screen and (min-width: 800px) and (orientation: landscape)");
-        assert!(query.matches(Viewport {
-            width: 1000.0,
-            height: 500.0,
-            ..Viewport::default()
-        }));
-        assert!(!query.matches(Viewport {
-            width: 500.0,
-            height: 1000.0,
-            ..Viewport::default()
-        }));
+        let preferences = Preferences::default();
+        assert!(query.matches(
+            Viewport {
+                width: 1000.0,
+                height: 500.0,
+                ..Viewport::default()
+            },
+            preferences
+        ));
+        assert!(!query.matches(
+            Viewport {
+                width: 500.0,
+                height: 1000.0,
+                ..Viewport::default()
+            },
+            preferences
+        ));
+    }
+
+    #[test]
+    fn media_color_scheme_uses_preferences() {
+        let query = MediaQuery::parse("(prefers-color-scheme: dark)");
+        let viewport = Viewport::default();
+        assert!(!query.matches(viewport, Preferences::default()));
+        let dark = Preferences {
+            color_scheme: ColorScheme::Dark,
+            ..Preferences::default()
+        };
+        assert!(query.matches(viewport, dark));
+    }
+
+    #[test]
+    fn media_reduced_motion_uses_preferences() {
+        let reduce = MediaQuery::parse("(prefers-reduced-motion: reduce)");
+        let no_preference = MediaQuery::parse("(prefers-reduced-motion: no-preference)");
+        let viewport = Viewport::default();
+        assert!(!reduce.matches(viewport, Preferences::default()));
+        assert!(no_preference.matches(viewport, Preferences::default()));
+        let reduced = Preferences {
+            reduced_motion: true,
+            ..Preferences::default()
+        };
+        assert!(reduce.matches(viewport, reduced));
+        assert!(!no_preference.matches(viewport, reduced));
+    }
+
+    #[test]
+    fn media_resolution_and_aspect_ratio() {
+        let viewport = Viewport {
+            width: 1600.0,
+            height: 900.0,
+            scale_factor: 2.0,
+        };
+        let preferences = Preferences::default();
+        assert!(MediaQuery::parse("(min-resolution: 2dppx)").matches(viewport, preferences));
+        assert!(MediaQuery::parse("(resolution: 192dpi)").matches(viewport, preferences));
+        assert!(!MediaQuery::parse("(min-resolution: 3dppx)").matches(viewport, preferences));
+        assert!(MediaQuery::parse("(aspect-ratio: 16/9)").matches(viewport, preferences));
+        assert!(MediaQuery::parse("(min-aspect-ratio: 4/3)").matches(viewport, preferences));
+        assert!(!MediaQuery::parse("(max-aspect-ratio: 3/2)").matches(viewport, preferences));
+    }
+
+    #[test]
+    fn media_input_and_display_mode() {
+        let viewport = Viewport::default();
+        let preferences = Preferences::default();
+        assert!(
+            MediaQuery::parse("(hover: none) and (pointer: none) and (display-mode: fullscreen)")
+                .matches(viewport, preferences)
+        );
+        assert!(!MediaQuery::parse("(hover: hover)").matches(viewport, preferences));
+        assert!(!MediaQuery::parse("(pointer: fine)").matches(viewport, preferences));
+        let fine = Preferences {
+            pointer: Pointer::Fine,
+            ..Preferences::default()
+        };
+        assert!(MediaQuery::parse("(pointer: fine)").matches(viewport, fine));
+    }
+
+    #[test]
+    fn media_negation_types_and_unknown_features() {
+        let viewport = Viewport::default();
+        let preferences = Preferences::default();
+        assert!(!MediaQuery::parse("print").matches(viewport, preferences));
+        assert!(MediaQuery::parse("screen").matches(viewport, preferences));
+        assert!(
+            MediaQuery::parse("only screen and (min-width: 100px)").matches(viewport, preferences)
+        );
+        assert!(
+            MediaQuery::parse("not screen and (min-width: 9999px)").matches(viewport, preferences)
+        );
+        assert!(
+            !MediaQuery::parse("not screen and (min-width: 100px)").matches(viewport, preferences)
+        );
+        assert!(!MediaQuery::parse("(scripting: enabled)").matches(viewport, preferences));
+    }
+
+    #[test]
+    fn cascade_applies_preference_media_queries() {
+        let css = r#"
+            .a { color: #000000; }
+            @media (prefers-color-scheme: dark) {
+                .a { color: #ffffff; }
+            }
+        "#;
+        let sheet = Stylesheet::parse(css);
+        let classes = vec!["a".to_string()];
+        let element = element("text", &classes);
+        let dark = Preferences {
+            color_scheme: ColorScheme::Dark,
+            ..Preferences::default()
+        };
+        let dark_cascade = Cascade::with_preferences(&sheet, Viewport::default(), dark);
+        let dark_style = dark_cascade.compute(&element, &[], None, &[], &[]);
+        assert!(dark_style.text.color.components[0] > 0.9);
+
+        let light_cascade = Cascade::new(&sheet, Viewport::default());
+        let light_style = light_cascade.compute(&element, &[], None, &[], &[]);
+        assert!(light_style.text.color.components[0] < 0.1);
     }
 
     #[test]

@@ -23,7 +23,7 @@ use crate::animation::{self, AnimationSet};
 use crate::api::ApiManager;
 use crate::config::ConfigLoader;
 use crate::css::properties::ClipPath;
-use crate::css::{Axis, Overflow, Stylesheet, Viewport, Visibility};
+use crate::css::{Axis, Overflow, Preferences, Stylesheet, Viewport, Visibility};
 use crate::layout::LayoutEngine;
 use crate::render::media_painter::media_draw_rect;
 use crate::render::{
@@ -82,6 +82,7 @@ pub struct Runtime {
     loaded_fonts: HashSet<String>,
     config_mtime: Option<std::time::SystemTime>,
     css_mtime: Option<std::time::SystemTime>,
+    preferences: Preferences,
     overlay_dirty: bool,
     shadows_dirty: bool,
     fast_mode: bool,
@@ -124,6 +125,7 @@ impl Runtime {
         let text = TextEngine::new();
         let config_mtime = mtime(&config.path);
         let css_mtime = mtime(&css_path);
+        let preferences = Preferences::detect();
         let mut runtime = Self {
             config,
             css_path,
@@ -147,6 +149,7 @@ impl Runtime {
             loaded_fonts: HashSet::new(),
             config_mtime,
             css_mtime,
+            preferences,
             overlay_dirty: true,
             shadows_dirty: true,
             fast_mode: false,
@@ -298,6 +301,7 @@ impl Runtime {
         };
         self.stylesheet = stylesheet;
         self.scene = scene;
+        self.preferences = Preferences::detect();
         self.api.reset();
         self.apply_styles_and_layout();
         self.config_mtime = mtime(&self.config.path);
@@ -322,7 +326,8 @@ impl Runtime {
             }
         }
         self.scene.viewport = self.viewport;
-        self.scene.resolve_styles(&self.stylesheet);
+        self.scene
+            .resolve_styles_with_preferences(&self.stylesheet, self.preferences);
         self.scene.layout(&mut LayoutEngine::new(&mut self.text));
         let paths = media_paths(&self.scene);
         self.media.retain_paths(&paths);

@@ -475,7 +475,7 @@ Modern color spaces are supported:
 
 | At-rule | Behavior |
 | --- | --- |
-| `@media` | Parsed and applied. Supported features: `min-width`, `max-width`, `min-height`, `max-height`, `orientation`, `prefers-reduced-motion`, `prefers-color-scheme`. |
+| `@media` | Parsed and applied. Supports media types (`screen`, `all`, `print`), `not`/`only`, and the features listed below. |
 | `@supports` | Declaration and selector conditions, including `and`, `or`, `not`, `selector(...)`. |
 | `@keyframes`, `@-webkit-keyframes` | Keyframe animations. |
 | `@font-face` | Local `font-family`, `src: url(...)`, `font-weight` and `font-style`. |
@@ -491,13 +491,30 @@ Modern color spaces are supported:
 }
 ```
 
+Supported features:
+
+- Dimensions: `min-width`, `max-width`, `min-height`, `max-height`, `orientation` (`portrait`/`landscape`).
+- Color and motion: `prefers-color-scheme` (`light`/`dark`) and `prefers-reduced-motion` (`reduce`/`no-preference`).
+- Output: `resolution`, `min-resolution`, `max-resolution` (`dppx`/`x`, `dpi`, `dpcm`); `aspect-ratio`, `min-aspect-ratio`, `max-aspect-ratio` (`16/9` or a decimal).
+- Input: `hover`, `any-hover` (`none`/`hover`), `pointer`, `any-pointer` (`none`/`coarse`/`fine`).
+- Display: `display-mode` (`fullscreen`, `browser`, `minimal-ui`, `standalone`, `picture-in-picture`, `borderless`, `window-controls-overlay`, `tabbed`).
+
+How preferences are detected (at load and reload):
+
+- `prefers-color-scheme`: `WIDDGYY_COLOR_SCHEME=light|dark` overrides detection. Otherwise Widdgyy reads `gsettings org.gnome.desktop.interface color-scheme`, then `gtk-theme`, then KDE's `ColorScheme`, then `GTK_THEME`. The default is light.
+- `prefers-reduced-motion`: `WIDDGYY_REDUCED_MOTION=1|0` overrides. Otherwise `gsettings ... enable-animations=false` or KDE's `AnimationDurationFactor=0` enables reduce. The default is no-preference.
+- `hover`/`any-hover` and `pointer`/`any-pointer`: the wallpaper has no input, so they default to `none`. Override with `WIDDGYY_HOVER`, `WIDDGYY_ANY_HOVER`, `WIDDGYY_POINTER`, `WIDDGYY_ANY_POINTER` for testing or unusual setups.
+- `display-mode`: defaults to `fullscreen` because the surface is a layer-shell background. Override with `WIDDGYY_DISPLAY_MODE`.
+- `resolution`: uses the viewport scale factor (currently 1.0 until the platform reports fractional output scale), so `1dppx`/`96dpi` is the default.
+
 Behavior notes:
 
-- Comma-separated conditions are OR; `and` is AND.
-- `prefers-color-scheme: light` matches; `prefers-color-scheme: dark` does not (the engine renders the light/default palette).
-- `prefers-reduced-motion: no-preference` matches; `reduce` does not (no system preference is read).
-- Unknown media features are ignored rather than treated as false.
-- `resolution`, `aspect-ratio`, `hover`, `pointer`, `any-hover`, `any-pointer`, `display-mode`, `scripting`, etc. are not implemented.
+- Comma-separated conditions are OR; `and` is AND; `not` negates the whole condition; `only` is accepted.
+- `print` does not match; `screen` and `all` do.
+- Unknown media features do not match (they are not silently ignored).
+- Theme/preference changes are picked up on the next reload (touching `styles.css` or `config.py` is enough).
+- `widdgyy --check-css` prints the detected preferences.
+- `scripting`, `prefers-contrast`, `prefers-reduced-transparency`, `forced-colors`, `update`, `overflow-block` and similar features are not implemented.
 
 ## Supported CSS properties
 
@@ -731,9 +748,9 @@ This is the complete list of known unsupported or partially supported behavior. 
 
 - `@import`, `@charset`, `@namespace`, `@page`, `@container`, `@scope`, `@property`, `@counter-style`, `@font-palette-values`, `@view-transition`.
 - Cascade layers: `@layer` blocks are parsed but flattened, so layer order is ignored.
-- Media features beyond `min/max-width`, `min/max-height`, `orientation`, `prefers-reduced-motion`, `prefers-color-scheme`: `resolution`, `aspect-ratio`, `hover`, `pointer`, `any-hover`, `any-pointer`, `display-mode`, `scripting`, etc.
-- `prefers-color-scheme: dark` never matches (the engine uses the light/default palette).
-- `prefers-reduced-motion: reduce` does not match (no system preference is read).
+- Media features beyond the supported set: `scripting`, `prefers-contrast`, `prefers-reduced-transparency`, `forced-colors`, `update`, `overflow-block`, etc.
+- Automatic preference changes without a reload (the system theme is probed on load/reload).
+- Fractional output-scale detection: `resolution` uses `Viewport::scale_factor`, currently 1.0.
 
 ### Values and functions
 

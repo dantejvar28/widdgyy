@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::config::ConfigLoader;
-use crate::css::{Stylesheet, Viewport};
+use crate::css::{Preferences, Stylesheet, Viewport};
 use crate::scene::{Node, Scene};
 
 pub fn run(config_path: Option<PathBuf>) -> Result<()> {
@@ -24,7 +24,8 @@ pub fn run(config_path: Option<PathBuf>) -> Result<()> {
 
     // Run the cascade so malformed selectors/variables are also reported.
     let mut scene = scene;
-    scene.resolve_styles(&stylesheet);
+    let preferences = Preferences::detect();
+    scene.resolve_styles_with_preferences(&stylesheet, preferences);
 
     println!("widdgyy CSS check");
     println!("  config:    {}", path.display());
@@ -33,6 +34,14 @@ pub fn run(config_path: Option<PathBuf>) -> Result<()> {
     println!("  rules:     {}", stylesheet.rules.len());
     println!("  keyframes: {}", stylesheet.keyframes.len());
     println!("  fonts:     {}", stylesheet.font_faces.len());
+    println!(
+        "  prefs:     color-scheme={:?}, reduced-motion={}, hover={:?}, pointer={:?}, display-mode={:?}",
+        preferences.color_scheme,
+        preferences.reduced_motion,
+        preferences.hover,
+        preferences.pointer,
+        preferences.display_mode
+    );
     println!();
 
     if stylesheet.errors.is_empty() {

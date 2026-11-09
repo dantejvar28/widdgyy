@@ -15,6 +15,7 @@
 pub mod cascade;
 pub mod computed;
 pub mod parser;
+pub mod preferences;
 pub mod properties;
 pub mod selector;
 pub mod values;
@@ -24,6 +25,7 @@ pub use computed::{
     BackgroundStyle, BorderStyleComputed, ComputedStyle, EffectsStyle, FlexStyle, GridStyle,
     TextStyle,
 };
+pub use preferences::{ColorScheme, DisplayMode, Hover, Pointer, Preferences};
 pub use properties::{
     AlignContent, AlignItems, BackgroundPosition, BackgroundRepeat, BackgroundSize, BorderBox,
     BorderStyle, BoxSizing, ClipPath, Declarations, Display, Filter, FlexDirection, FlexWrap,
