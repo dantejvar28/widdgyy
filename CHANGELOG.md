@@ -8,6 +8,11 @@ CLI and internal APIs.
 
 ## [Unreleased]
 
+### Added
+
+- Fifth showcase scene, Neon Divide: a glossy cyberpunk market dashboard over
+  a split-tone city wallpaper, with README screenshot and animated preview.
+
 ### Planned
 
 - Finish B8: static/dynamic overlay caching, dynamic shadow-slot count and

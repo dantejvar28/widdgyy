@@ -40,7 +40,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes and known changes.
 
 ## Showcase
 
-Four complete scenes live in [`examples/showcase/`](examples/showcase). They are small, self-contained `config.py` + `styles.css` pairs and only use the assets already in the repository.
+Five complete scenes live in [`examples/showcase/`](examples/showcase). They are small, self-contained `config.py` + `styles.css` pairs and only use the assets already in the repository.
 
 | Aurora Grid | Bonsai Editorial |
 | --- | --- |
@@ -50,13 +50,18 @@ Four complete scenes live in [`examples/showcase/`](examples/showcase). They are
 | [![Night Train: a cinematic video wallpaper with a sparse editorial overlay](docs/assets/showcase/night-train.webp)](examples/showcase/night-train) | [![Neon Terminal: a type-only cyberpunk dashboard](docs/assets/showcase/neon.webp)](examples/showcase/neon) |
 | **Night Train** — 4K video fast path, cinematic overlay and animated glow. | **Neon Terminal** — nested grids, scanlines, blinking status and live clock. |
 
+| [Neon Divide](examples/showcase/neon-divide) |
+| --- |
+| [![Neon Divide: a glossy cyberpunk market dashboard over a split-tone city wallpaper](docs/assets/showcase/neon-divide.webp)](examples/showcase/neon-divide) |
+| **Neon Divide** — split-tone cyberpunk wallpaper, glossy market feed, stat cards, live seconds and a pulsing center seam. |
+
 Animated previews (900x506, 10 fps):
 
-| [Aurora Grid](examples/showcase/aurora) | [Night Train](examples/showcase/night-train) |
-| --- | --- |
-| ![Aurora Grid animated preview](docs/assets/showcase/aurora.gif) | ![Night Train animated preview](docs/assets/showcase/night-train.gif) |
+| [Aurora Grid](examples/showcase/aurora) | [Night Train](examples/showcase/night-train) | [Neon Divide](examples/showcase/neon-divide) |
+| --- | --- | --- |
+| ![Aurora Grid animated preview](docs/assets/showcase/aurora.gif) | ![Night Train animated preview](docs/assets/showcase/night-train.gif) | ![Neon Divide animated preview](docs/assets/showcase/neon-divide.gif) |
 
-The [Bonsai](docs/assets/showcase/bonsai.gif) and [Neon](docs/assets/showcase/neon.gif) animations are also included.
+The [Bonsai](docs/assets/showcase/bonsai.gif) and [Neon Terminal](docs/assets/showcase/neon.gif) animations are also included.
 
 ```bash
 ./target/release/widdgyy --config examples/showcase/aurora/config.py
