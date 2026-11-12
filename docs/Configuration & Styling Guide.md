@@ -1,6 +1,6 @@
 # Widdgyy Configuration & Styling Guide
 
-> **Status: alpha (`0.2.0-alpha.1`).** The config schema, CSS surface and CLI may still change; keep a backup of your config and check the [changelog](../CHANGELOG.md) before upgrading.
+> **Status: alpha (`0.2.0-alpha.2`).** The config schema, CSS surface and CLI may still change; keep a backup of your config and check the [changelog](../CHANGELOG.md) before upgrading.
 
 Widdgyy turns a Wayland wallpaper into a display-only scene. It has three independent inputs:
 

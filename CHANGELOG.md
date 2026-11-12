@@ -8,6 +8,22 @@ CLI and internal APIs.
 
 ## [Unreleased]
 
+### Planned
+
+- Finish B8: static/dynamic overlay caching, dynamic shadow-slot count and
+  per-pass GPU frame timing.
+- Layout-affecting transitions (`width`, `height`, `margin`, `padding`, `gap`,
+  `top`, `left`, ...) and empty/non-empty `text-shadow` transitions.
+- Fine B3 text limits: `font-variation-settings`, synthetic small caps,
+  first-line wrapping for `text-indent` and a true inline formatting context.
+- Fine B7 limits: live desktop-theme changes, fractional output scale and
+  `prefers-contrast`/`forced-colors`/`scripting`.
+
+## [0.2.0-alpha.2] - 2026-11-12
+
+Layout-focused alpha: the B1 layout surface is complete, and four showcase
+scenes ship with the README.
+
 ### Added
 
 - Block formatting contexts: vertical child stacking, parent/child and sibling
@@ -27,14 +43,17 @@ CLI and internal APIs.
   animated previews: Aurora Grid, Bonsai Editorial, Night Train and Neon
   Terminal.
 
-### Planned
+### Changed
 
-- Finish B8: static/dynamic overlay caching, dynamic shadow-slot count and
-  per-pass GPU frame timing.
-- Fine B3 text limits: `font-variation-settings`, synthetic small caps,
-  first-line wrapping for `text-indent` and a true inline formatting context.
-- Fine B7 limits: live desktop-theme changes, fractional output scale and
-  `prefers-contrast`/`forced-colors`/`scripting`.
+- The layout engine keeps the custom block/flex/grid implementation; Taffy
+  was evaluated and rejected for this release.
+- Text intrinsic block size now uses the natural text height rather than the
+  one-word-per-line narrow-shape height, so auto-height flex columns do not
+  expand when API/clock text changes.
+
+### Fixed
+
+- Removed leftover shadow-pass debug logging from the renderer.
 
 ## [0.2.0-alpha.1] - 2026-11-09
 

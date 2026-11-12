@@ -24,7 +24,7 @@ The scene is described by `config.py` (preferred) or the legacy `config.jsonc`; 
 
 ## Status: alpha
 
-**Current development line: `0.2.0-alpha.1`.**
+**Current development line: `0.2.0-alpha.2`.**
 
 Widdgyy is usable as a daily wallpaper engine, but it is still **alpha**:
 
