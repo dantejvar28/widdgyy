@@ -2,11 +2,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Bonsai Editorial: a warm, print-inspired scene using an image wallpaper."""
 
+from pathlib import Path
+
 from widdgyy import Clock, Grid, HBox, Image, Text, VBox
+
+SCENE_DIR = Path(__file__).resolve().parent
 
 stickers = [
     Grid(
-        Image("../../../assets/tree.png", cls="tree"),
+        Image(str(SCENE_DIR / "tree.png"), cls="tree"),
         HBox(cls="veil"),
         HBox(
             Text("WIDDGYY STUDIES", cls="brand"),

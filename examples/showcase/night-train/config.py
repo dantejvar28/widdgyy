@@ -2,11 +2,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Night Train: a cinematic video wallpaper with a sparse editorial overlay."""
 
+from pathlib import Path
+
 from widdgyy import Clock, Grid, HBox, Text, VBox, Video
+
+SCENE_DIR = Path(__file__).resolve().parent
 
 stickers = [
     Video(
-        "../../../assets/wallpaper.mp4",
+        str(SCENE_DIR / "night-train.mp4"),
         cls="backdrop",
         width="100%",
         height="100%",

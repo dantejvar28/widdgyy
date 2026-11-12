@@ -2,7 +2,8 @@
 
 Four self-contained scenes used for the screenshots and GIFs in the project
 README. They are intentionally small: each one is a single `config.py` plus a
-`styles.css`, and they only use assets already in `assets/`.
+`styles.css`. Bonsai and Night Train ship their own local media (`tree.png`
+and an 8 s 1080p clip) so the scenes work in a fresh clone.
 
 | Scene | What it demonstrates |
 | --- | --- |
