@@ -23,6 +23,9 @@ CLI and internal APIs.
   intrinsic track sizing and `justify-items`/`justify-self`/`place-*`.
 - B1 Firefox conformance fixtures for block margins, flex bases and named grid
   areas.
+- Four showcase scenes (`examples/showcase/`) with README screenshots and
+  animated previews: Aurora Grid, Bonsai Editorial, Night Train and Neon
+  Terminal.
 
 ### Planned
 

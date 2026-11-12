@@ -23,3 +23,8 @@ packaging/aur/*.src.tar.*
 # OS
 .DS_Store
 Thumbs.db
+
+# README showcase media (the root assets/ directory is intentionally ignored)
+!docs/assets/
+!docs/assets/showcase/
+!docs/assets/showcase/**

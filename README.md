@@ -38,6 +38,31 @@ Beta criteria: freeze the config schema and CSS scope for a release, add a CI ma
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes and known changes.
 
+## Showcase
+
+Four complete scenes live in [`examples/showcase/`](examples/showcase). They are small, self-contained `config.py` + `styles.css` pairs and only use the assets already in the repository.
+
+| Aurora Grid | Bonsai Editorial |
+| --- | --- |
+| [![Aurora Grid: a no-video CSS grid dashboard](docs/assets/showcase/aurora.webp)](examples/showcase/aurora) | [![Bonsai Editorial: a warm print-inspired scene over a transparent tree image](docs/assets/showcase/bonsai.webp)](examples/showcase/bonsai) |
+| **Aurora Grid** — layered gradients, grid areas and a transform-driven ring. No video or external assets. | **Bonsai Editorial** — transparent PNG wallpaper, serif type, paper gradients and named grid areas. |
+| [Night Train](examples/showcase/night-train) | [Neon Terminal](examples/showcase/neon) |
+| [![Night Train: a cinematic video wallpaper with a sparse editorial overlay](docs/assets/showcase/night-train.webp)](examples/showcase/night-train) | [![Neon Terminal: a type-only cyberpunk dashboard](docs/assets/showcase/neon.webp)](examples/showcase/neon) |
+| **Night Train** — 4K video fast path, cinematic overlay and animated glow. | **Neon Terminal** — nested grids, scanlines, blinking status and live clock. |
+
+Animated previews (900x506, 10 fps):
+
+| [Aurora Grid](examples/showcase/aurora) | [Night Train](examples/showcase/night-train) |
+| --- | --- |
+| ![Aurora Grid animated preview](docs/assets/showcase/aurora.gif) | ![Night Train animated preview](docs/assets/showcase/night-train.gif) |
+
+The [Bonsai](docs/assets/showcase/bonsai.gif) and [Neon](docs/assets/showcase/neon.gif) animations are also included.
+
+```bash
+./target/release/widdgyy --config examples/showcase/aurora/config.py
+./target/release/widdgyy --config examples/showcase/night-train/config.py
+```
+
 ## Features
 
 - **Python scene DSL:** `config.py` with `Text`, `Clock`, `ApiText`, `Video`, `Image`, `Gif`, `HBox`, `VBox`, `Grid`; loops and constants are allowed, styling stays in CSS.

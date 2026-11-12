@@ -1,0 +1,221 @@
+/* SPDX-FileCopyrightText: 2026 Daniel
+   SPDX-License-Identifier: GPL-3.0-or-later */
+
+:root {
+  --ink: #eef4ff;
+  --muted: rgba(226, 238, 255, 0.62);
+  --faint: rgba(226, 238, 255, 0.30);
+  --cyan: #63e6ff;
+  --pink: #ff6fae;
+  --violet: #8b7bff;
+}
+
+.page {
+  box-sizing: border-box;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  padding: 64px 72px 54px;
+  grid-template-columns: 1.35fr 0.9fr 0.75fr 0.75fr;
+  grid-template-rows: 92px 1fr 148px;
+  grid-template-areas:
+    "top    top    top     top"
+    "word   word   clock   weather"
+    "quote  quote  footer  footer";
+  column-gap: 28px;
+  row-gap: 26px;
+  color: var(--ink);
+  font-family: "Cantarell";
+  background:
+    radial-gradient(70% 55% at 12% 8%, rgba(255, 92, 166, 0.42), transparent 64%),
+    radial-gradient(64% 62% at 92% 18%, rgba(64, 214, 255, 0.34), transparent 66%),
+    radial-gradient(80% 80% at 52% 118%, rgba(120, 92, 255, 0.52), transparent 66%),
+    linear-gradient(138deg, #060814 0%, #0d1730 48%, #05060d 100%);
+  overflow: hidden;
+  position: relative;
+}
+
+.page::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    repeating-linear-gradient(90deg, rgba(235, 245, 255, 0.045) 0 1px, transparent 1px 96px),
+    repeating-linear-gradient(0deg, rgba(235, 245, 255, 0.035) 0 1px, transparent 1px 96px);
+  pointer-events: none;
+}
+
+.page::after {
+  content: "";
+  position: absolute;
+  left: 54%;
+  top: 46%;
+  width: 520px;
+  height: 520px;
+  margin: -260px 0 0 -260px;
+  border: 1px solid rgba(120, 226, 255, 0.20);
+  border-radius: 50%;
+  box-shadow:
+    0 0 90px rgba(90, 210, 255, 0.10),
+    inset 0 0 90px rgba(140, 90, 255, 0.08);
+  animation: drift 9s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+@keyframes drift {
+  from { transform: translate(-18px, 8px) scale(0.96); opacity: 0.55; }
+  to   { transform: translate(24px, -16px) scale(1.05); opacity: 1; }
+}
+
+.topbar {
+  grid-area: top;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(226, 238, 255, 0.16);
+  padding-bottom: 22px;
+}
+
+.brand {
+  font-family: "JetBrainsMono Nerd Font";
+  font-size: 18px;
+  font-weight: bold;
+  letter-spacing: 6px;
+  color: var(--ink);
+}
+
+.kicker {
+  font-family: "JetBrainsMono Nerd Font";
+  font-size: 12px;
+  letter-spacing: 4px;
+  color: var(--muted);
+}
+
+.wordmark-wrap {
+  grid-area: word;
+  display: flex;
+  align-items: flex-end;
+  min-width: 0;
+}
+
+.wordmark {
+  font-size: 174px;
+  font-weight: bold;
+  letter-spacing: -10px;
+  line-height: 0.86;
+  color: rgba(238, 244, 255, 0.90);
+  text-shadow:
+    0 0 26px rgba(99, 230, 255, 0.28),
+    0 0 90px rgba(139, 123, 255, 0.20);
+  white-space: nowrap;
+}
+
+.clock-card,
+.weather-card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-self: end;
+  height: 336px;
+  padding: 26px 24px;
+  background: linear-gradient(160deg, rgba(16, 28, 54, 0.62), rgba(8, 12, 28, 0.30));
+  border: 1px solid rgba(180, 220, 255, 0.16);
+  border-radius: 22px;
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.10),
+    0 18px 42px rgba(0, 0, 0, 0.28);
+}
+
+.clock-card { grid-area: clock; }
+.weather-card { grid-area: weather; }
+
+.label {
+  font-family: "JetBrainsMono Nerd Font";
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: var(--cyan);
+  margin-bottom: 8px;
+}
+
+.time {
+  font-size: 86px;
+  font-weight: bold;
+  line-height: 0.98;
+  letter-spacing: -3px;
+  color: var(--ink);
+  text-shadow: 0 0 34px rgba(99, 230, 255, 0.24);
+}
+
+.temperature {
+  font-size: 92px;
+  font-weight: bold;
+  line-height: 0.92;
+  letter-spacing: -4px;
+  color: var(--ink);
+}
+
+.caption {
+  font-family: "JetBrainsMono Nerd Font";
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--muted);
+  margin-top: 12px;
+}
+
+.quote-card {
+  grid-area: quote;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 8px 0 0 2px;
+}
+
+.quote {
+  font-family: "DejaVu Serif";
+  font-size: 40px;
+  font-style: italic;
+  color: rgba(238, 244, 255, 0.92);
+  text-shadow: 0 0 28px rgba(255, 111, 174, 0.18);
+}
+
+.quote-caption {
+  font-family: "JetBrainsMono Nerd Font";
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: var(--faint);
+  margin-top: 14px;
+}
+
+.footer {
+  grid-area: footer;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 22px;
+  border-top: 1px solid rgba(226, 238, 255, 0.14);
+  padding-top: 22px;
+}
+
+.footer-index {
+  font-family: "DejaVu Serif";
+  font-size: 42px;
+  color: var(--pink);
+}
+
+.footer-copy {
+  font-family: "JetBrainsMono Nerd Font";
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: var(--muted);
+}
+
+.footer-tag {
+  font-family: "JetBrainsMono Nerd Font";
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #071018;
+  background: var(--cyan);
+  border-radius: 999px;
+  padding: 7px 12px 5px;
+}

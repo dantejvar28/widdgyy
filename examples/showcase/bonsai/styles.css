@@ -1,0 +1,272 @@
+/* SPDX-FileCopyrightText: 2026 Daniel
+   SPDX-License-Identifier: GPL-3.0-or-later */
+
+:root {
+  --paper: #f3ead9;
+  --paper-deep: #e2cfae;
+  --ink: #22271f;
+  --ink-soft: rgba(34, 39, 31, 0.62);
+  --ink-faint: rgba(34, 39, 31, 0.28);
+  --vermilion: #b23b2a;
+  --moss: #526b48;
+}
+
+.page {
+  box-sizing: border-box;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  padding: 58px 72px 50px;
+  grid-template-columns: 1.45fr 0.78fr 0.52fr;
+  grid-template-rows: 70px 1fr 150px 64px;
+  grid-template-areas:
+    "mast   mast   mast"
+    "title  title  index"
+    "clock  weather index"
+    "footer footer footer";
+  column-gap: 34px;
+  row-gap: 18px;
+  color: var(--ink);
+  font-family: "Carlito";
+  background:
+    radial-gradient(58% 52% at 78% 46%, rgba(255, 249, 235, 0.88), transparent 64%),
+    radial-gradient(46% 40% at 12% 10%, rgba(255, 255, 255, 0.55), transparent 70%),
+    linear-gradient(146deg, var(--paper) 0%, #efe3cd 52%, var(--paper-deep) 100%);
+  overflow: hidden;
+  position: relative;
+}
+
+.page::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    repeating-linear-gradient(90deg, rgba(70, 58, 38, 0.025) 0 1px, transparent 1px 120px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.page::after {
+  content: "";
+  position: absolute;
+  right: 78px;
+  top: 92px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--vermilion);
+  box-shadow: 0 0 0 9px rgba(178, 59, 42, 0.10);
+  animation: breathe 6s ease-in-out infinite alternate;
+  z-index: 2;
+}
+
+@keyframes breathe {
+  from { opacity: 0.55; transform: scale(0.82); }
+  to   { opacity: 1; transform: scale(1.08); }
+}
+
+.tree {
+  position: absolute;
+  right: -8vw;
+  bottom: -6vh;
+  width: 50vw;
+  height: 88vh;
+  object-fit: contain;
+  opacity: 0.96;
+  animation: sway 11s ease-in-out infinite alternate;
+  z-index: 0;
+}
+
+@keyframes sway {
+  from { transform: translate(0, 6px) rotate(-0.35deg); }
+  to   { transform: translate(-8px, -6px) rotate(0.35deg); }
+}
+
+.veil {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(243, 234, 217, 0.99) 0%,
+    rgba(243, 234, 217, 0.95) 34%,
+    rgba(243, 234, 217, 0.42) 62%,
+    rgba(243, 234, 217, 0.00) 82%
+  );
+  z-index: 0;
+}
+
+.masthead,
+.title-row,
+.clock-block,
+.weather-block,
+.index,
+.footer {
+  z-index: 1;
+}
+
+.masthead {
+  grid-area: mast;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--ink-faint);
+  padding-bottom: 18px;
+}
+
+.brand {
+  font-family: "DejaVu Serif";
+  font-size: 16px;
+  font-weight: bold;
+  letter-spacing: 4px;
+}
+
+.meta-line {
+  font-family: "JetBrainsMono Nerd Font";
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--ink-soft);
+}
+
+.title-row {
+  grid-area: title;
+  display: flex;
+  align-items: flex-end;
+  gap: 26px;
+}
+
+.display {
+  font-family: "DejaVu Serif";
+  font-size: 176px;
+  font-weight: bold;
+  letter-spacing: -9px;
+  line-height: 0.82;
+  color: var(--ink);
+  text-shadow: 0 1px 0 rgba(255, 250, 238, 0.65);
+}
+
+.kanji-stack {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 8px;
+}
+
+.kanji {
+  font-family: "Noto Sans CJK JP";
+  font-size: 54px;
+  line-height: 1.02;
+  color: var(--vermilion);
+}
+
+.clock-block {
+  grid-area: clock;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding-bottom: 8px;
+}
+
+.eyebrow {
+  font-family: "JetBrainsMono Nerd Font";
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: var(--moss);
+  margin-bottom: 7px;
+}
+
+.clock {
+  font-family: "DejaVu Serif";
+  font-size: 108px;
+  font-weight: bold;
+  line-height: 0.9;
+  letter-spacing: -5px;
+  color: var(--ink);
+}
+
+.date {
+  font-family: "JetBrainsMono Nerd Font";
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--ink-soft);
+  margin-top: 12px;
+}
+
+.weather-block {
+  grid-area: weather;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 18px 22px;
+  border: 1px solid var(--ink-faint);
+  border-radius: 2px;
+  background: rgba(243, 234, 217, 0.92);
+}
+
+.temperature {
+  font-family: "DejaVu Serif";
+  font-size: 88px;
+  font-weight: bold;
+  line-height: 0.9;
+  letter-spacing: -4px;
+}
+
+.index {
+  grid-area: index;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  border: 1px solid var(--ink-faint);
+  border-radius: 2px;
+  padding: 20px 22px;
+  background: rgba(243, 234, 217, 0.95);
+  align-self: start;
+  height: auto;
+  min-height: 210px;
+}
+
+.index-word {
+  font-family: "JetBrainsMono Nerd Font";
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: var(--ink-soft);
+  margin-bottom: 12px;
+}
+
+.seal-row {
+  margin-top: 10px;
+}
+
+.seal {
+  font-family: "Noto Sans CJK JP";
+  font-size: 32px;
+  color: #f7efe0;
+  background: var(--vermilion);
+  width: 54px;
+  height: 54px;
+  border-radius: 4px;
+  text-align: center;
+  line-height: 1.45;
+  box-shadow: inset 0 0 0 2px rgba(247, 239, 224, 0.38);
+}
+
+.footer {
+  grid-area: footer;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  border-top: 1px solid var(--ink-faint);
+  padding-top: 18px;
+}
+
+.quote {
+  font-family: "DejaVu Serif";
+  font-size: 24px;
+  font-style: italic;
+  color: var(--ink);
+}
+
+.colophon {
+  font-family: "JetBrainsMono Nerd Font";
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--ink-faint);
+}

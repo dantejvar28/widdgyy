@@ -1,0 +1,218 @@
+/* SPDX-FileCopyrightText: 2026 Daniel
+   SPDX-License-Identifier: GPL-3.0-or-later */
+
+:root {
+  --paper: #f2eee5;
+  --muted: rgba(242, 238, 229, 0.62);
+  --faint: rgba(242, 238, 229, 0.30);
+  --red: #d34a35;
+}
+
+.backdrop {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.page {
+  box-sizing: border-box;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  padding: 56px 68px 54px;
+  grid-template-columns: 86px 1.25fr 0.75fr;
+  grid-template-rows: 76px 1fr 110px;
+  grid-template-areas:
+    "rail top   top"
+    "rail clock meta"
+    "rail foot  foot";
+  column-gap: 40px;
+  row-gap: 12px;
+  color: var(--paper);
+  font-family: "Carlito";
+  background:
+    linear-gradient(90deg, rgba(6, 8, 10, 0.58) 0%, rgba(6, 8, 10, 0.08) 48%, rgba(6, 8, 10, 0.36) 100%),
+    linear-gradient(0deg, rgba(6, 8, 10, 0.62) 0%, transparent 42%, rgba(6, 8, 10, 0.28) 100%);
+  position: relative;
+  overflow: hidden;
+}
+
+.page::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 90% at 50% 42%, transparent 38%, rgba(3, 4, 6, 0.52) 100%);
+  pointer-events: none;
+}
+
+.page::after {
+  content: "";
+  position: absolute;
+  left: 68px;
+  top: 178px;
+  width: 1px;
+  height: 210px;
+  background: linear-gradient(180deg, transparent, var(--red) 22%, var(--red) 78%, transparent);
+  animation: pulse 5s ease-in-out infinite alternate;
+}
+
+@keyframes pulse {
+  from { opacity: 0.35; transform: scaleY(0.86); }
+  to   { opacity: 1; transform: scaleY(1.04); }
+}
+
+.rail,
+.topbar,
+.clock-block,
+.meta,
+.footer {
+  z-index: 1;
+}
+
+.rail {
+  grid-area: rail;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding-top: 4px;
+}
+
+.rail-letter {
+  font-family: "DejaVu Serif";
+  font-size: 22px;
+  line-height: 1.55;
+  color: var(--muted);
+  letter-spacing: 2px;
+}
+
+.topbar {
+  grid-area: top;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(242, 238, 229, 0.22);
+  padding-bottom: 16px;
+}
+
+.brand {
+  font-family: "JetBrainsMono Nerd Font";
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: var(--paper);
+}
+
+.meta-line {
+  font-family: "JetBrainsMono Nerd Font";
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--muted);
+}
+
+.clock-block {
+  grid-area: clock;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding-bottom: 18px;
+}
+
+.eyebrow {
+  font-family: "JetBrainsMono Nerd Font";
+  font-size: 10px;
+  letter-spacing: 4px;
+  color: var(--red);
+  margin-bottom: 10px;
+}
+
+.clock {
+  font-family: "DejaVu Serif";
+  font-size: 164px;
+  font-weight: bold;
+  line-height: 0.84;
+  letter-spacing: -9px;
+  color: var(--paper);
+  text-shadow:
+    0 2px 0 rgba(0, 0, 0, 0.45),
+    0 0 42px rgba(211, 74, 53, 0.20);
+}
+
+.date-row {
+  display: flex;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.date {
+  font-family: "JetBrainsMono Nerd Font";
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: var(--muted);
+}
+
+.dim {
+  color: var(--faint);
+}
+
+.meta {
+  grid-area: meta;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding-bottom: 20px;
+  border-left: 1px solid rgba(242, 238, 229, 0.20);
+  padding-left: 28px;
+}
+
+.coordinate {
+  font-family: "JetBrainsMono Nerd Font";
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--faint);
+  margin-bottom: 22px;
+}
+
+.statement {
+  font-family: "DejaVu Serif";
+  font-size: 44px;
+  font-style: italic;
+  line-height: 1.02;
+  color: var(--paper);
+  margin-bottom: 16px;
+}
+
+.note {
+  font-family: "DejaVu Serif";
+  font-size: 15px;
+  font-style: italic;
+  line-height: 1.35;
+  color: var(--muted);
+  margin-top: 18px;
+  max-width: 300px;
+}
+
+.footer {
+  grid-area: foot;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  border-top: 1px solid rgba(242, 238, 229, 0.22);
+  padding-top: 18px;
+}
+
+.kanji {
+  font-family: "Noto Sans CJK JP";
+  font-size: 40px;
+  color: var(--paper);
+  letter-spacing: 10px;
+}
+
+.colophon {
+  font-family: "JetBrainsMono Nerd Font";
+  font-size: 9px;
+  letter-spacing: 3px;
+  color: var(--faint);
+}
