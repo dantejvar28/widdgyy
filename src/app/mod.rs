@@ -440,11 +440,6 @@ impl Runtime {
     /// and runs whenever a shadow value changes.
     fn rebuild_shadows(&mut self) {
         self.shadow_items = crate::render::painter::collect_shadow_draws(&self.scene);
-        eprintln!(
-            "DEBUG shadows items={} region={:?}",
-            self.shadow_items.len(),
-            self.shadow_region
-        );
         self.shadow_region = crate::render::painter::shadow_region(&self.scene, self.viewport);
     }
 
@@ -458,11 +453,6 @@ impl Runtime {
         clear_scene(&mut self.shadow_mask, self.viewport, SHADOW_MASK_SCALE);
         let mut painter = Painter::new(&mut self.text, &mut self.media);
         painter.paint_text_masks(&self.scene, &mut self.shadow_mask, SHADOW_MASK_SCALE);
-        eprintln!(
-            "DEBUG mask empty={} items={}",
-            self.shadow_mask.encoding().is_empty(),
-            self.shadow_items.len()
-        );
     }
 
     /// Rasterize the boxes of backdrop-filter panels. The mask is static until

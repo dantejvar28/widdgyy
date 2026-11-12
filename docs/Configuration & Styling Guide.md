@@ -524,7 +524,7 @@ The lists below are the properties the parser accepts. Unknown properties are re
 
 ### Box model and layout
 
-- `display`: `none`, `block`, `inline`, `inline-block`, `flex`, `inline-flex`, `grid`, `inline-grid`, plus the `-webkit-box` alias used by line-clamp markup. Containers use the flex layout unless the value is `grid`; block/inline/inline-block do not create a distinct formatting context.
+- `display`: `none`, `block`, `inline`, `inline-block`, `flex`, `inline-flex`, `grid`, `inline-grid`, plus the `-webkit-box` alias used by line-clamp markup. `flex` containers use the flex algorithm, `grid` containers use the grid algorithm, and every other value uses block formatting.
 - `position`: `static`, `relative`, `absolute`, `fixed`. `sticky` is accepted but behaves as `static`.
 - `top`, `right`, `bottom`, `left`, `inset`, `inset-inline`, `inset-inline-start`, `inset-inline-end`, `inset-block`, `inset-block-start`, `inset-block-end`
 - `width`, `height`, `min-width`, `min-height`, `max-width`, `max-height` (values: `auto`, `none`, `stretch`/`-webkit-fill-available`, `min-content`, `max-content`, `fit-content()`, lengths and percentages)
@@ -540,6 +540,8 @@ The lists below are the properties the parser accepts. Unknown properties are re
 - `visibility`: `visible`, `hidden`, `collapse`
 
 `position: absolute` and `position: fixed` take children out of flow and honor insets. `position: relative` shifts a child without affecting its siblings. Root placement is still controlled by the config `anchor`/`offset` fields.
+
+Block containers stack in-flow children vertically. Adjacent vertical margins collapse to the largest positive margin plus the most negative one, and the first/last child margins collapse with the parent when no border or padding separates them. Auto-width block-level containers fill their containing block; text and media keep their intrinsic (atomic) size. `margin-left: auto`/`margin-right: auto` center a block box horizontally.
 
 ### Backgrounds
 
@@ -664,16 +666,20 @@ The GPU shadow pass composites shadows **behind the whole overlay texture**. An 
 - `gap`, `row-gap`, `column-gap` (aliases `grid-row-gap`, `grid-column-gap`)
 - `order`, `flex-grow`, `flex-shrink`, `flex-basis`
 
-`flex-wrap` creates multiple lines and respects `align-content`, per-line `justify-content` and `align-items`. `flex-grow` distributes free main-axis space and `flex-shrink` removes overflow. `flex-basis` is parsed, but the measured size is used as the base for now.
+`flex-wrap` creates multiple lines and respects `align-content`, per-line `justify-content` and `align-items`. `flex-basis` is the flex base size (`auto` falls back to `width`/`height`, then to the measured size); `flex-grow` distributes free main-axis space from that base and `flex-shrink` removes overflow using the scaled shrink factor. The automatic minimum size keeps flex items at their min-content size unless an explicit `min-width`/`min-height` changes it. `align-items: stretch` stretches auto cross sizes when the container has a definite cross size.
 
 ### Grid
 
-- `grid-template-columns`, `grid-template-rows`
+- `grid-template-columns`, `grid-template-rows`, `grid-template-areas`
+- `grid-auto-columns`, `grid-auto-rows`
 - `grid-auto-flow`: `row`, `column`, `row dense`, `column dense`
-- `grid-column`, `grid-column-start`, `grid-column-end`
+- `grid-area`, `grid-column`, `grid-column-start`, `grid-column-end`
 - `grid-row`, `grid-row-start`, `grid-row-end`
+- `justify-items`, `justify-self`, `place-items`, `place-content`, `place-self`
 
-Track values: `auto`, `min-content`, `max-content`, `fit-content()`, `N fr`, `px`, `%`, `repeat()` and `minmax()`. Explicit placement, spans (`span N`), row/column auto-flow and track stretching are supported. Track lists accept whitespace-separated values such as `100px 1fr auto` and `repeat(2, 1fr)`.
+Track values: `auto`, `min-content`, `max-content`, `fit-content()`, `N fr`, `px`, `%`, `repeat()` and `minmax()`. Track sizing uses real intrinsic contributions: `auto`/`max-content` size to the widest item, `min-content` to the narrowest word, `fit-content()` clamps between them, `fr` consumes the remaining space, and `minmax()` applies a floor to its maximum. Named areas declared with `grid-template-areas` can be referenced by `grid-area` or by `grid-row`/`grid-column`; a bare `grid-area: name` spans the whole area. `grid-auto-columns`/`grid-auto-rows` size implicit tracks and cycle when fewer values than tracks are supplied. Auto placement is sparse by default and `dense` backfills earlier holes. `justify-items`/`align-items` align items inside their area, while `justify-self`/`align-self` override one item and `place-*` set both axes. `justify-content`/`align-content` distribute leftover track space.
+
+Track lists accept whitespace-separated values such as `100px 1fr auto` and `repeat(2, 1fr)`. The `grid-template`/`grid` shorthands are accepted but ignored; use the longhands.
 
 ### Animation
 
@@ -712,9 +718,7 @@ This is the complete list of known unsupported or partially supported behavior. 
 - Floats (`float`, `clear`), multi-column layout (`columns`, `column-*`).
 - `display: contents`, `display: flow-root` and other display values beyond the list above.
 - `position: sticky` (parsed as static).
-- `justify-items`, `justify-self`, `place-items`, `place-content`, `place-self`.
-- `grid-area`, `grid-template-areas`, `grid-auto-columns`, `grid-auto-rows`, `grid-template`/`grid` shorthands (accepted but ignored).
-- True `min-content`/`max-content` intrinsic sizing in flex; `flex-basis` as the flex base; margin collapsing.
+- `grid-template`/`grid` shorthands (accepted but ignored; use the longhands).
 - Scrolling behavior for `overflow: scroll`/`auto` (content is clipped, not scrollable).
 - Logical properties beyond the width/height/margin/padding/inset aliases listed above.
 

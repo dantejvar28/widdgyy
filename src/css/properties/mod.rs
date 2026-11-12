@@ -250,7 +250,34 @@ pub enum TrackSize {
     MinContent,
     MaxContent,
     FitContent(Length),
+    MinMax(Box<TrackSize>, Box<TrackSize>),
     Repeat(u32, Vec<TrackSize>),
+}
+
+/// One line of a `grid-row`/`grid-column` placement.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum GridLine {
+    #[default]
+    Auto,
+    Line(i32),
+    Span(i32),
+    Name(String),
+}
+
+/// Start/end pair for one grid axis (`grid-row` or `grid-column`).
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct GridPlacement {
+    pub start: GridLine,
+    pub end: GridLine,
+}
+
+/// Bounding box of a named area declared by `grid-template-areas`.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct GridArea {
+    pub row: usize,
+    pub column: usize,
+    pub row_span: usize,
+    pub column_span: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -420,6 +447,8 @@ pub struct Declarations {
     pub flex_direction: Option<FlexDirection>,
     pub flex_wrap: Option<FlexWrap>,
     pub justify_content: Option<JustifyContent>,
+    pub justify_items: Option<AlignItems>,
+    pub justify_self: Option<AlignItems>,
     pub align_items: Option<AlignItems>,
     pub align_content: Option<AlignContent>,
     pub align_self: Option<AlignItems>,
@@ -434,9 +463,12 @@ pub struct Declarations {
     // grid
     pub grid_template_columns: Option<Vec<TrackSize>>,
     pub grid_template_rows: Option<Vec<TrackSize>>,
+    pub grid_template_areas: Option<std::collections::BTreeMap<String, GridArea>>,
+    pub grid_auto_columns: Option<Vec<TrackSize>>,
+    pub grid_auto_rows: Option<Vec<TrackSize>>,
     pub grid_auto_flow: Option<GridAutoFlow>,
-    pub grid_column: Option<(i32, i32)>,
-    pub grid_row: Option<(i32, i32)>,
+    pub grid_column: Option<GridPlacement>,
+    pub grid_row: Option<GridPlacement>,
 
     // stacking
     pub z_index: Option<i32>,

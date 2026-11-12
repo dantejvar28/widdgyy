@@ -323,11 +323,6 @@ impl GpuRenderer {
             self.shadow_sigmas.fill(None);
             self.shadow_scissor = scissor;
         }
-        eprintln!(
-            "DEBUG render_shadows count={} scissor={:?}",
-            shadows.len(),
-            scissor
-        );
         let mut sigmas: Vec<f32> = Vec::new();
         let mut items = Vec::with_capacity(shadows.len().min(MAX_SHADOW_ITEMS));
         for shadow in shadows.iter().take(MAX_SHADOW_ITEMS) {

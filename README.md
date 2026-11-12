@@ -181,7 +181,7 @@ Implemented in the renderer:
 - Border/outline: width, style, color, radius, outline, `border-image` with source/slice/width/outset/repeat and the shorthand.
 - Text: family, size, weight, style, stretch, live OpenType features, line-height, letter/word spacing, alignment/last-line alignment, indent, direction, decoration, transform, white-space, wrapping, overflow/ellipsis, multi-line `line-clamp`, shadows, `font` shorthand.
 - Effects: opacity, box-shadow (including inset), text-shadow, color filters, nested `blur()`/`drop-shadow()`, individual translate/rotate/scale, transform/transform-origin, clip-path shapes and `path()`, isolation, object-fit/object-position, multi-layer masks with `mask-mode`, `backdrop-filter` on video.
-- Layout: flex (direction, wrap, justify, align-*, gap, order, grow/shrink/basis) and CSS grid (templates, auto-flow, explicit placement, spans, stretching).
+- Layout: block formatting with margin collapsing, flex (direction, wrap, justify, align/place-*, gap, order, grow/shrink and `flex-basis` as the flex base) and CSS grid (explicit/implicit tracks, `repeat()`/`minmax()`, named areas, `grid-area`, spans, sparse/dense auto-flow, intrinsic track sizing and item/content alignment).
 - Animations: `@keyframes` applied at runtime for transform, opacity, color, background-color, text-shadow and custom properties; timing functions, delay, direction, iteration and fill modes.
 - Transitions: hot-reload style changes animate opacity, transform, colors, text-shadow and custom properties with duration/delay/easing; layout transitions are still pending.
 - Media queries: width/height/aspect-ratio, orientation, resolution, `prefers-color-scheme`/`prefers-reduced-motion` from the desktop, `hover`/`pointer`, display mode, media types and `not`/`only`.
@@ -235,7 +235,7 @@ src/
     parser.rs            stylesheet scanner
     cascade.rs           specificity, variables, inheritance
     computed.rs          typed style modules
-  layout/                box model, flex, grid
+  layout/                box model, block/flex/grid formatting
   media/                 GStreamer video backend
   platform/              Wayland layer-shell host
   render/                Vello painters, filter/mask layers, wgpu surface

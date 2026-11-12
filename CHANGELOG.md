@@ -8,12 +8,26 @@ CLI and internal APIs.
 
 ## [Unreleased]
 
+### Added
+
+- Block formatting contexts: vertical child stacking, parent/child and sibling
+  margin collapsing (including negative margins), block-level auto-width fill
+  and auto horizontal margin centering.
+- Real `min-content`, `max-content` and `fit-content()` sizing for text,
+  media, flex items and grid tracks, including intrinsic minimum sizes for
+  flex shrinking.
+- `flex-basis` as the flex base size, with grow/shrink, automatic minimum
+  clamps and stretched cross sizes resolved from that base.
+- Grid `grid-template-areas`/`grid-area`, `grid-auto-columns`,
+  `grid-auto-rows`, sparse/dense row and column auto-flow, `minmax()` floors,
+  intrinsic track sizing and `justify-items`/`justify-self`/`place-*`.
+- B1 Firefox conformance fixtures for block margins, flex bases and named grid
+  areas.
+
 ### Planned
 
 - Finish B8: static/dynamic overlay caching, dynamic shadow-slot count and
   per-pass GPU frame timing.
-- B1 layout leftovers: margin collapsing, real `min-content`/`max-content`,
-  `flex-basis`, `grid-area`/`grid-template-areas` and `place-*`.
 - Fine B3 text limits: `font-variation-settings`, synthetic small caps,
   first-line wrapping for `text-indent` and a true inline formatting context.
 - Fine B7 limits: live desktop-theme changes, fractional output scale and

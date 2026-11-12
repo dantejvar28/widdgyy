@@ -1,0 +1,13 @@
+.root {
+  display: grid;
+  width: 300px;
+  height: 100px;
+  grid-template-columns: repeat(3, 100px);
+  grid-template-rows: 50px 50px;
+  grid-template-areas:
+    "header header side"
+    "main   main   side";
+}
+.header { grid-area: header; }
+.side { grid-area: side; }
+.main { grid-area: main; }

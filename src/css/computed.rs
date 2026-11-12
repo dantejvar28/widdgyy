@@ -19,8 +19,9 @@ use super::properties::transition::{Animation, Transition};
 use super::properties::{
     AlignContent, AlignItems, BackgroundPosition, BackgroundRepeat, BackgroundSize, BorderBox,
     BorderStyle, BoxSizing, ClipPath, Declarations, Display, Filter, FlexDirection, FlexWrap,
-    FontStyle, GridAutoFlow, JustifyContent, LineHeight, Overflow, Position, TextAlign,
-    TextDecoration, TextOverflow, TextTransform, TrackSize, Visibility, WhiteSpace,
+    FontStyle, GridArea, GridAutoFlow, GridPlacement, JustifyContent, LineHeight, Overflow,
+    Position, TextAlign, TextDecoration, TextOverflow, TextTransform, TrackSize, Visibility,
+    WhiteSpace,
 };
 use super::values::{Angle, Axis, Edges, Length, ResolveContext, Shadow, Size, TransformOp};
 
@@ -197,8 +198,9 @@ pub struct FlexStyle {
     pub wrap: FlexWrap,
     pub justify: JustifyContent,
     pub align_items: AlignItems,
+    pub align_items_set: bool,
     pub align_content: AlignContent,
-    pub align_self: AlignItems,
+    pub align_self: Option<AlignItems>,
     pub row_gap: Length,
     pub column_gap: Length,
     pub order: i32,
@@ -214,8 +216,9 @@ impl Default for FlexStyle {
             wrap: FlexWrap::NoWrap,
             justify: JustifyContent::Start,
             align_items: AlignItems::Start,
+            align_items_set: false,
             align_content: AlignContent::Start,
-            align_self: AlignItems::Start,
+            align_self: None,
             row_gap: Length::Zero,
             column_gap: Length::Zero,
             order: 0,
@@ -230,9 +233,15 @@ impl Default for FlexStyle {
 pub struct GridStyle {
     pub columns: Vec<TrackSize>,
     pub rows: Vec<TrackSize>,
+    pub auto_columns: Vec<TrackSize>,
+    pub auto_rows: Vec<TrackSize>,
+    pub areas: BTreeMap<String, GridArea>,
     pub auto_flow: GridAutoFlow,
-    pub column: (i32, i32),
-    pub row: (i32, i32),
+    pub column: GridPlacement,
+    pub row: GridPlacement,
+    pub justify_items: AlignItems,
+    pub justify_items_set: bool,
+    pub justify_self: Option<AlignItems>,
 }
 
 impl Default for GridStyle {
@@ -240,9 +249,15 @@ impl Default for GridStyle {
         Self {
             columns: Vec::new(),
             rows: Vec::new(),
+            auto_columns: Vec::new(),
+            auto_rows: Vec::new(),
+            areas: BTreeMap::new(),
             auto_flow: GridAutoFlow::Row,
-            column: (0, 0),
-            row: (0, 0),
+            column: GridPlacement::default(),
+            row: GridPlacement::default(),
+            justify_items: AlignItems::Stretch,
+            justify_items_set: false,
+            justify_self: None,
         }
     }
 }
@@ -647,12 +662,20 @@ impl ComputedStyle {
         }
         if let Some(align) = declarations.align_items {
             style.flex.align_items = align;
+            style.flex.align_items_set = true;
+        }
+        if let Some(justify) = declarations.justify_items {
+            style.grid.justify_items = justify;
+            style.grid.justify_items_set = true;
+        }
+        if let Some(justify) = declarations.justify_self {
+            style.grid.justify_self = Some(justify);
         }
         if let Some(align) = declarations.align_content {
             style.flex.align_content = align;
         }
         if let Some(align) = declarations.align_self {
-            style.flex.align_self = align;
+            style.flex.align_self = Some(align);
         }
         if let Some((row, column)) = &declarations.gap {
             style.flex.row_gap = row.clone();
@@ -715,14 +738,23 @@ impl ComputedStyle {
         if let Some(rows) = &declarations.grid_template_rows {
             style.grid.rows = rows.clone();
         }
+        if let Some(areas) = &declarations.grid_template_areas {
+            style.grid.areas = areas.clone();
+        }
+        if let Some(columns) = &declarations.grid_auto_columns {
+            style.grid.auto_columns = columns.clone();
+        }
+        if let Some(rows) = &declarations.grid_auto_rows {
+            style.grid.auto_rows = rows.clone();
+        }
         if let Some(flow) = declarations.grid_auto_flow {
             style.grid.auto_flow = flow;
         }
-        if let Some(column) = declarations.grid_column {
-            style.grid.column = column;
+        if let Some(column) = &declarations.grid_column {
+            style.grid.column = column.clone();
         }
-        if let Some(row) = declarations.grid_row {
-            style.grid.row = row;
+        if let Some(row) = &declarations.grid_row {
+            style.grid.row = row.clone();
         }
 
         style

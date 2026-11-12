@@ -46,32 +46,65 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str) -> bool {
             true
         }
         "justify-content" => {
-            decl.justify_content = Some(match value.to_ascii_lowercase().as_str() {
-                "start" | "flex-start" | "left" => JustifyContent::Start,
-                "end" | "flex-end" | "right" => JustifyContent::End,
-                "center" => JustifyContent::Center,
-                "space-between" => JustifyContent::SpaceBetween,
-                "space-around" => JustifyContent::SpaceAround,
-                "space-evenly" => JustifyContent::SpaceEvenly,
-                _ => return false,
-            });
+            decl.justify_content = Some(parse_justify_content(value));
             true
         }
         "align-items" => {
             decl.align_items = Some(parse_align_items(value));
             true
         }
+        "justify-items" => {
+            decl.justify_items = Some(parse_align_items(value));
+            true
+        }
+        "justify-self" => {
+            decl.justify_self = Some(parse_align_items(value));
+            true
+        }
+        "place-items" => {
+            let values = split_ws(value);
+            let align = values
+                .first()
+                .map(|value| parse_align_items(value))
+                .unwrap_or(AlignItems::Stretch);
+            let justify = values
+                .get(1)
+                .map(|value| parse_align_items(value))
+                .unwrap_or(align);
+            decl.align_items = Some(align);
+            decl.justify_items = Some(justify);
+            true
+        }
+        "place-content" => {
+            let values = split_ws(value);
+            let align = values
+                .first()
+                .map(|value| parse_align_content(value))
+                .unwrap_or(AlignContent::Stretch);
+            let justify = values
+                .get(1)
+                .map(|value| parse_justify_content(value))
+                .unwrap_or_else(|| justify_from_align_content(align));
+            decl.align_content = Some(align);
+            decl.justify_content = Some(justify);
+            true
+        }
+        "place-self" => {
+            let values = split_ws(value);
+            let align = values
+                .first()
+                .map(|value| parse_align_items(value))
+                .unwrap_or(AlignItems::Stretch);
+            let justify = values
+                .get(1)
+                .map(|value| parse_align_items(value))
+                .unwrap_or(align);
+            decl.align_self = Some(align);
+            decl.justify_self = Some(justify);
+            true
+        }
         "align-content" => {
-            decl.align_content = Some(match value.to_ascii_lowercase().as_str() {
-                "start" | "flex-start" => AlignContent::Start,
-                "end" | "flex-end" => AlignContent::End,
-                "center" => AlignContent::Center,
-                "space-between" => AlignContent::SpaceBetween,
-                "space-around" => AlignContent::SpaceAround,
-                "space-evenly" => AlignContent::SpaceEvenly,
-                "stretch" => AlignContent::Stretch,
-                _ => return false,
-            });
+            decl.align_content = Some(parse_align_content(value));
             true
         }
         "align-self" => {
@@ -124,11 +157,45 @@ pub fn apply(decl: &mut Declarations, name: &str, value: &str) -> bool {
 
 fn parse_align_items(value: &str) -> AlignItems {
     match value.to_ascii_lowercase().as_str() {
-        "end" | "flex-end" => AlignItems::End,
+        "end" | "flex-end" | "self-end" | "right" => AlignItems::End,
         "center" => AlignItems::Center,
-        "stretch" => AlignItems::Stretch,
-        "baseline" => AlignItems::Baseline,
+        "stretch" | "normal" => AlignItems::Stretch,
+        "baseline" | "first baseline" | "last baseline" => AlignItems::Baseline,
         _ => AlignItems::Start,
+    }
+}
+
+fn parse_align_content(value: &str) -> AlignContent {
+    match value.to_ascii_lowercase().as_str() {
+        "end" | "flex-end" => AlignContent::End,
+        "center" => AlignContent::Center,
+        "space-between" => AlignContent::SpaceBetween,
+        "space-around" => AlignContent::SpaceAround,
+        "space-evenly" => AlignContent::SpaceEvenly,
+        "stretch" | "normal" => AlignContent::Stretch,
+        _ => AlignContent::Start,
+    }
+}
+
+fn parse_justify_content(value: &str) -> JustifyContent {
+    match value.to_ascii_lowercase().as_str() {
+        "end" | "flex-end" | "right" => JustifyContent::End,
+        "center" => JustifyContent::Center,
+        "space-between" => JustifyContent::SpaceBetween,
+        "space-around" => JustifyContent::SpaceAround,
+        "space-evenly" => JustifyContent::SpaceEvenly,
+        _ => JustifyContent::Start,
+    }
+}
+
+fn justify_from_align_content(align: AlignContent) -> JustifyContent {
+    match align {
+        AlignContent::End => JustifyContent::End,
+        AlignContent::Center => JustifyContent::Center,
+        AlignContent::SpaceBetween => JustifyContent::SpaceBetween,
+        AlignContent::SpaceAround => JustifyContent::SpaceAround,
+        AlignContent::SpaceEvenly => JustifyContent::SpaceEvenly,
+        AlignContent::Start | AlignContent::Stretch => JustifyContent::Start,
     }
 }
 
